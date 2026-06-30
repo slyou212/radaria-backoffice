@@ -571,6 +571,8 @@ def dashboard():
     cur.execute("SELECT COUNT(*) as n FROM alertes_centrales WHERE date=CURRENT_DATE::TEXT"); alertes_today = cur.fetchone()["n"]
     cur.execute("SELECT COALESCE(SUM(prix_mensuel),0) as n FROM clients WHERE statut='actif'"); ca_mensuel = cur.fetchone()["n"]
     cur.execute("SELECT COUNT(*) as n FROM sinistres WHERE statut='ouvert'"); sinistres_ouverts = cur.fetchone()["n"]
+    cur.execute("SELECT COUNT(*) as n FROM sinistres WHERE statut='en_cours'"); sinistres_en_cours = cur.fetchone()["n"]
+    cur.execute("SELECT COUNT(*) as n FROM sinistres WHERE statut='resolu'"); sinistres_resolus = cur.fetchone()["n"]
     cur.execute("""
         SELECT s.*, c.nom_magasin FROM sinistres s
         JOIN clients c ON c.id=s.client_id
@@ -585,7 +587,8 @@ def dashboard():
         sd['date_resolution']  = str(sd['date_resolution'])[:10]  if sd.get('date_resolution')  else None
         sinistres.append(sd)
     stats = {"total_clients": total_clients, "online": online, "alertes_today": alertes_today,
-             "ca_mensuel": ca_mensuel, "sinistres_ouverts": sinistres_ouverts}
+             "ca_mensuel": ca_mensuel, "sinistres_ouverts": sinistres_ouverts,
+             "sinistres_en_cours": sinistres_en_cours, "sinistres_resolus": sinistres_resolus}
     return render_template("dashboard.html", clients=clients, stats=stats, sinistres=sinistres)
 
 # =================================================================
@@ -1370,6 +1373,29 @@ def api_agent_envoyer_commande():
     """, (client_id, lk, action, params))
     conn.commit(); cur.close(); conn.close()
     return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
+
+@app.route("/api/agent/deployer_tous", methods=["POST"])
+@login_required
+def api_deployer_tous():
+    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
+    conn = get_db(); cur = conn.cursor()
+    # Récupérer tous les agents en ligne (vu < 10 min)
+    cur.execute("""
+        SELECT a.license_key, c.nom_magasin FROM agents_status a
+        JOIN clients c ON c.id = a.client_id
+        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
+    """)
+    agents = cur.fetchall()
+    nb = 0
+    for a in agents:
+        cur.execute("""
+            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+            SELECT c.id, %s, 'mettre_a_jour', '{}'
+            FROM clients c WHERE c.license_key = %s
+        """, (a["license_key"], a["license_key"]))
+        nb += 1
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
 
 @app.route("/agents")
 @login_required

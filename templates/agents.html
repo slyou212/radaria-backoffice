@@ -171,6 +171,17 @@ body{background:#07071a;color:#e0e0e0;font-family:'Segoe UI',Arial,sans-serif;mi
       </select>
       <button type="submit" class="btn-envoyer">Envoyer</button>
     </form>
+
+    <!-- Déploiement global -->
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid #1a1a3a;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:12px;color:#e0e0e0;font-weight:600">⬆ Déployer sur tous les clients</div>
+        <div style="font-size:11px;color:#555;margin-top:2px">Envoie "mettre_a_jour" à tous les agents EN LIGNE — redémarre automatiquement</div>
+      </div>
+      <button onclick="deployerTous()" style="background:#1a3a1a;border:1px solid #2a5a2a;color:#4ade80;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600">
+        ⬆ Déployer partout
+      </button>
+    </div>
   </div>
 
   <div class="counter">Actualisation automatique toutes les 30 secondes</div>
@@ -193,6 +204,26 @@ document.getElementById('formCmd').addEventListener('submit', function(e){
     .then(r=>r.json())
     .then(d=>alert(d.message || (d.ok ? 'Commande envoyée' : 'Erreur')));
 });
+
+function deployerTous() {
+  const agents = {{ agents | tojson }};
+  const enligne = agents.filter(a => a.statut_visuel === 'online');
+  if (!enligne.length) { alert('Aucun agent en ligne.'); return; }
+  if (!confirm('Déployer la mise à jour sur ' + enligne.length + ' agent(s) en ligne ?')) return;
+  let ok = 0, ko = 0;
+  const promesses = enligne.map(a => {
+    const fd = new FormData();
+    fd.append('license_key', a.license_key);
+    fd.append('action', 'mettre_a_jour');
+    return fetch('/api/agent/commande/envoyer', {method:'POST', body:fd})
+      .then(r=>r.json())
+      .then(d=>{ if(d.ok) ok++; else ko++; })
+      .catch(()=>ko++);
+  });
+  Promise.all(promesses).then(()=>{
+    alert('Déploiement lancé : ' + ok + ' succès, ' + ko + ' erreur(s).\nLes agents vont se mettre à jour dans les 5 prochaines minutes.');
+  });
+}
 </script>
 </body>
 </html>

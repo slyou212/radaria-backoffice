@@ -62,6 +62,52 @@
   </div>
 </div>
 
+<!-- App Mobile -->
+<div class="card" style="margin-bottom:24px;border-left:4px solid #3b4fd8">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div style="color:#7b8cde;font-size:13px;font-weight:700;letter-spacing:.05em">📱 IDENTIFIANTS APP MOBILE</div>
+    <span style="font-size:11px;color:#555">Le client utilise ces identifiants pour se connecter à l'app RadarIA</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <!-- Username -->
+    <div style="background:#07071a;border-radius:10px;padding:14px;border:1px solid #1a1a3a">
+      <div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Identifiant</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <code id="app-username" style="color:#4ade80;font-size:16px;font-weight:700;flex:1">{{ client.username }}</code>
+        <button onclick="copyText('app-username','btn-copy-user')" id="btn-copy-user"
+          style="background:#1a2a1a;border:1px solid #2a4a2a;color:#4ade80;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px">
+          📋 Copier
+        </button>
+      </div>
+    </div>
+    <!-- Mot de passe -->
+    <div style="background:#07071a;border-radius:10px;padding:14px;border:1px solid #1a1a3a">
+      <div style="color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Mot de passe</div>
+      <form method="post" action="/client/{{ client.id }}/reset-password" style="display:flex;gap:6px">
+        <input type="text" name="new_password" placeholder="Nouveau mot de passe..."
+          style="flex:1;background:#0d0d2b;border:1px solid #1a1a3a;border-radius:6px;padding:6px 10px;color:#e0e0e0;font-size:13px">
+        <button type="submit"
+          style="background:#1a1a4a;border:1px solid #2a2a6a;color:#7b8cde;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
+          ↻ Changer
+        </button>
+      </form>
+      <div style="color:#444;font-size:10px;margin-top:6px">Laissez vide pour ne pas changer — envoyez le nouveau mot de passe au client manuellement</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function copyText(elemId, btnId) {
+  const txt = document.getElementById(elemId).innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = document.getElementById(btnId);
+    const orig = btn.innerText;
+    btn.innerText = '✅ Copié !';
+    setTimeout(() => btn.innerText = orig, 2000);
+  });
+}
+</script>
+
 <!-- Snapshots -->
 {% if snapshots %}
 <div class="card" style="margin-bottom:24px">

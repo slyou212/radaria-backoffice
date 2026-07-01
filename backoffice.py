@@ -320,9 +320,15 @@ def generer_pdf_contrat(client, contrat, signe=False):
             self.set_fill_color(13, 13, 43)
             self.rect(0, 0, 210, 28, 'F')
             self.set_y(6)
+            self.set_x(18)
+            # Logo : "Radar" blanc + "IA" rouge — identique au site
             self.set_font("Helvetica", "B", 18)
-            self.set_text_color(123, 140, 222)
-            self.cell(0, 8, "RadarIA", align="L", new_x="LMARGIN", new_y="NEXT")
+            self.set_text_color(255, 255, 255)
+            w_radar = self.get_string_width("Radar") + 1
+            self.cell(w_radar, 8, "Radar", new_x="RIGHT", new_y="LAST")
+            self.set_text_color(229, 57, 53)
+            self.cell(20, 8, "IA", new_x="LMARGIN", new_y="NEXT")
+            self.set_x(18)
             self.set_font("Helvetica", "", 9)
             self.set_text_color(160, 160, 180)
             self.cell(0, 5, "Surveillance par intelligence artificielle", align="L")
@@ -744,6 +750,19 @@ def edit_client(client_id):
         flash("Client mis a jour","success"); return redirect(url_for("client_detail",client_id=client_id))
     cur.close(); conn.close()
     return render_template("client_form.html", client=dict(client), action="edit")
+
+@app.route("/client/<int:client_id>/reset-password", methods=["POST"])
+@login_required
+def reset_password_client(client_id):
+    new_pwd = request.form.get("new_password","").strip()
+    if not new_pwd:
+        flash("Mot de passe vide — aucun changement","warning")
+        return redirect(url_for("client_detail", client_id=client_id))
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("UPDATE clients SET password_hash=%s WHERE id=%s", (hash_password(new_pwd), client_id))
+    conn.commit(); cur.close(); conn.close()
+    flash("Mot de passe app mobile mis à jour ✓","success")
+    return redirect(url_for("client_detail", client_id=client_id))
 
 @app.route("/client/<int:client_id>/suspension", methods=["POST"])
 @login_required

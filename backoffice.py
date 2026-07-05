@@ -267,6 +267,16 @@ def init_db():
         executed_at TIMESTAMP
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS push_tokens (
+        id         SERIAL PRIMARY KEY,
+        client_id  INTEGER REFERENCES clients(id),
+        token      TEXT UNIQUE NOT NULL,
+        platform   TEXT DEFAULT 'ios',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -1056,12 +1066,32 @@ def api_alerte():
     cur.execute("SELECT id FROM clients WHERE license_key=%s AND statut='actif'", (key,))
     client = cur.fetchone()
     if not client: cur.close(); conn.close(); return jsonify({"error":"License invalide"}),403
+    alert_type = data.get("type","")
+    camera_nom = data.get("camera","")
     cur.execute("""INSERT INTO alertes_centrales (client_id,alert_id,type,camera,date,heure,image_path,video_url,suspect_id,nb_personnes)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (client["id"],data.get("alert_id"),data.get("type"),data.get("camera"),
+        (client["id"],data.get("alert_id"),alert_type,camera_nom,
          data.get("date",str(date.today())),data.get("heure",""),data.get("image",""),
          data.get("video_url",""),str(data.get("suspect_id","")),data.get("nb_personnes",1)))
-    conn.commit(); cur.close(); conn.close(); return jsonify({"ok":True})
+    conn.commit(); cur.close(); conn.close()
+    # Envoi push notification (async, ne bloque pas la réponse)
+    try:
+        import threading
+        type_labels = {
+            "mouvement_rapide":"Mouvement suspect","posture_basse":"Posture suspecte",
+            "presence_longue":"Présence longue","sac_suspect":"Sac suspect",
+            "consommation":"Consommation sans payer","vol_caisse":"Vol dans la caisse",
+            "vol_etalage":"Vol à l'étalage","vol_a_la_tire":"Vol à la tire",
+            "agression":"Agression / violence",
+        }
+        label = type_labels.get(alert_type, alert_type or "Alerte")
+        titre = f"🚨 {label}"
+        corps = f"Caméra : {camera_nom}" if camera_nom else "Nouvelle alerte détectée"
+        threading.Thread(target=envoyer_push_notifications,
+                         args=(client["id"], titre, corps, {"alert_id":data.get("alert_id")}),
+                         daemon=True).start()
+    except Exception: pass
+    return jsonify({"ok":True})
 
 # =================================================================
 # HELPERS JWT (app mobile)
@@ -1126,7 +1156,7 @@ def api_mobile_alertes():
     if not client_id: return jsonify({"error":"Authentification requise"}),401
     limit = min(int(request.args.get("limit", 50)), 200)
     conn = get_db(); cur = conn.cursor()
-    cur.execute("""SELECT alert_id,type,camera,date,heure,image_path,feedback,suspect_id,nb_personnes
+    cur.execute("""SELECT alert_id,type,camera,date,heure,image_path,video_url,feedback,suspect_id,nb_personnes
         FROM alertes_centrales WHERE client_id=%s ORDER BY date DESC,heure DESC LIMIT %s""", (client_id, limit))
     alertes = [dict(a) for a in cur.fetchall()]
     cur.execute("SELECT COUNT(*) as n FROM alertes_centrales WHERE client_id=%s AND date=CURRENT_DATE::TEXT", (client_id,))
@@ -1269,6 +1299,78 @@ def api_mobile_sinistres():
     sinistres = [dict(s) for s in cur.fetchall()]
     cur.close(); conn.close()
     return jsonify({"ok":True,"sinistres":sinistres})
+
+@app.route("/api/mobile/feedback", methods=["POST"])
+@limiter.limit("60 per minute")
+def api_mobile_feedback():
+    """Enregistre le feedback (confirme / faux_positif) sur une alerte."""
+    data = request.get_json(silent=True) or {}
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    alert_id = data.get("alert_id")
+    feedback  = data.get("feedback","")  # "confirme" ou "faux_positif"
+    if not alert_id or feedback not in ("confirme","faux_positif"):
+        return jsonify({"error":"Paramètres invalides"}),400
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""UPDATE alertes_centrales SET feedback=%s
+                   WHERE alert_id=%s AND client_id=%s""",
+                (feedback, alert_id, client_id))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok":True})
+
+@app.route("/api/mobile/push-token", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_mobile_push_token():
+    """Enregistre le push token Expo pour les notifications."""
+    data = request.get_json(silent=True) or {}
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    token    = data.get("token","").strip()
+    platform = data.get("platform","ios")
+    if not token: return jsonify({"error":"Token manquant"}),400
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""INSERT INTO push_tokens (client_id,token,platform,updated_at)
+                   VALUES (%s,%s,%s,NOW())
+                   ON CONFLICT (token) DO UPDATE SET client_id=%s, updated_at=NOW()""",
+                (client_id, token, platform, client_id))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok":True})
+
+@app.route("/api/mobile/clips", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_mobile_clips():
+    """Retourne les alertes ayant une vidéo enregistrée."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""SELECT alert_id,type,camera,date,heure,video_url,feedback
+                   FROM alertes_centrales
+                   WHERE client_id=%s AND video_url IS NOT NULL AND video_url != ''
+                   ORDER BY date DESC,heure DESC LIMIT 100""", (client_id,))
+    clips = [dict(c) for c in cur.fetchall()]
+    cur.close(); conn.close()
+    return jsonify({"ok":True,"clips":clips})
+
+def envoyer_push_notifications(client_id, titre, corps, data_extra=None):
+    """Envoie une notification push Expo à tous les tokens du client."""
+    try:
+        import urllib.request, json as _json
+        conn = get_db(); cur = conn.cursor()
+        cur.execute("SELECT token FROM push_tokens WHERE client_id=%s", (client_id,))
+        tokens = [r["token"] for r in cur.fetchall()]
+        cur.close(); conn.close()
+        if not tokens: return
+        messages = [{"to":t,"title":titre,"body":corps,"sound":"default",
+                     "data":data_extra or {}} for t in tokens]
+        payload = _json.dumps(messages).encode()
+        req = urllib.request.Request(
+            "https://exp.host/--/api/v2/push/send",
+            data=payload,
+            headers={"Content-Type":"application/json","Accept":"application/json"}
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[PUSH] Erreur envoi notifications: {e}")
 
 # =================================================================
 # AGENTS PC — Supervision des gardiens clients

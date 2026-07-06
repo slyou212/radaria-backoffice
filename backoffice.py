@@ -1427,4 +1427,211 @@ def envoyer_push_notifications(client_id, titre, corps, data_extra=None):
         import urllib.request, json as _json
         conn = get_db(); cur = conn.cursor()
         cur.execute("SELECT token FROM push_tokens WHERE client_id=%s", (client_id,))
-        tokens = [r["token
+        tokens = [r["token"] for r in cur.fetchall()]
+        cur.close(); conn.close()
+        if not tokens: return
+        messages = [{"to":t,"title":titre,"body":corps,"sound":"default",
+                     "data":data_extra or {}} for t in tokens]
+        payload = _json.dumps(messages).encode()
+        req = urllib.request.Request(
+            "https://exp.host/--/api/v2/push/send",
+            data=payload,
+            headers={"Content-Type":"application/json","Accept":"application/json"}
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[PUSH] Erreur envoi notifications: {e}")
+
+# =================================================================
+# AGENTS PC — Supervision des gardiens clients
+# =================================================================
+
+def _agent_client_id(license_key):
+    """Retourne le client_id depuis la license_key."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT id FROM clients WHERE license_key=%s", (license_key,))
+    row = cur.fetchone(); cur.close(); conn.close()
+    return row["id"] if row else None
+
+@app.route("/api/agent/status", methods=["POST"])
+def api_agent_status():
+    """Reçoit le heartbeat de statut d'un Gardien PC."""
+    data = request.get_json(silent=True) or {}
+    lk   = data.get("license_key","")
+    if not lk:
+        return jsonify({"ok": False, "error": "license_key manquante"}), 400
+    client_id = _agent_client_id(lk)
+    conn = get_db(); cur = conn.cursor()
+    # Upsert sur (license_key, hostname)
+    hostname = data.get("hostname","")
+    cur.execute("""
+        INSERT INTO agents_pc
+            (client_id, license_key, hostname, agent_version,
+             surveillance_active, cameras_ok, cameras_total,
+             disk_libre_gb, backoffice_ms, reseau_ok, last_seen, statut)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),'online')
+        ON CONFLICT DO NOTHING
+    """, (client_id, lk, hostname,
+          data.get("agent_version","1.0"),
+          data.get("surveillance_active", False),
+          data.get("cameras_ok", 0),
+          data.get("cameras_total", 0),
+          data.get("disk_libre_gb"),
+          data.get("backoffice_ms"),
+          data.get("reseau_ok", True)))
+    cur.execute("""
+        UPDATE agents_pc SET
+            surveillance_active=%s, cameras_ok=%s, cameras_total=%s,
+            disk_libre_gb=%s, backoffice_ms=%s, reseau_ok=%s,
+            last_seen=NOW(), statut='online', agent_version=%s
+        WHERE license_key=%s AND hostname=%s
+    """, (data.get("surveillance_active", False),
+          data.get("cameras_ok", 0), data.get("cameras_total", 0),
+          data.get("disk_libre_gb"), data.get("backoffice_ms"),
+          data.get("reseau_ok", True), data.get("agent_version","1.0"),
+          lk, hostname))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/agent/incident", methods=["POST"])
+def api_agent_incident():
+    """Reçoit un incident signalé par un Gardien PC."""
+    data = request.get_json(silent=True) or {}
+    lk   = data.get("license_key","")
+    if not lk:
+        return jsonify({"ok": False, "error": "license_key manquante"}), 400
+    client_id = _agent_client_id(lk)
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO agents_incidents
+            (client_id, license_key, hostname, description, diagnostic,
+             fix_applique, priorite)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+    """, (client_id, lk,
+          data.get("hostname",""),
+          data.get("description",""),
+          data.get("diagnostic",""),
+          data.get("fix_applique",""),
+          data.get("priorite","moyenne")))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/agent/commandes", methods=["GET"])
+def api_agent_commandes():
+    """Retourne les commandes en attente pour un Gardien PC."""
+    lk       = request.args.get("license_key","")
+    hostname = request.args.get("hostname","")
+    if not lk:
+        return jsonify([])
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT id, action, parametres FROM agents_commandes
+        WHERE license_key=%s AND statut='en_attente'
+        ORDER BY created_at ASC
+    """, (lk,))
+    cmds = cur.fetchall()
+    # Marquer comme "envoyees"
+    if cmds:
+        ids = [c["id"] for c in cmds]
+        cur.execute("UPDATE agents_commandes SET statut='envoyee' WHERE id=ANY(%s)", (ids,))
+        conn.commit()
+    cur.close(); conn.close()
+    result = []
+    for c in cmds:
+        try:
+            params = json.loads(c["parametres"] or "{}")
+        except Exception:
+            params = {}
+        params["action"] = c["action"]
+        params["_cmd_id"] = c["id"]
+        result.append(params)
+    return jsonify(result)
+
+@app.route("/api/agent/commande/envoyer", methods=["POST"])
+@login_required
+def api_agent_envoyer_commande():
+    """Envoie une commande à un Gardien PC (depuis le backoffice admin)."""
+    lk     = request.form.get("license_key","")
+    action = request.form.get("action","")
+    params = request.form.get("parametres","{}")
+    if not lk or not action:
+        return jsonify({"ok": False, "error": "license_key et action requis"}), 400
+    client_id = _agent_client_id(lk)
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+        VALUES (%s,%s,%s,%s)
+    """, (client_id, lk, action, params))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
+
+@app.route("/api/agent/deployer_tous", methods=["POST"])
+@login_required
+def api_deployer_tous():
+    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
+    conn = get_db(); cur = conn.cursor()
+    # Récupérer tous les agents en ligne (vu < 10 min)
+    cur.execute("""
+        SELECT a.license_key, c.nom_magasin FROM agents_status a
+        JOIN clients c ON c.id = a.client_id
+        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
+    """)
+    agents = cur.fetchall()
+    nb = 0
+    for a in agents:
+        cur.execute("""
+            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+            SELECT c.id, %s, 'mettre_a_jour', '{}'
+            FROM clients c WHERE c.license_key = %s
+        """, (a["license_key"], a["license_key"]))
+        nb += 1
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
+
+@app.route("/agents")
+@login_required
+def supervision_agents():
+    """Page de supervision de tous les Gardiens PC."""
+    conn = get_db(); cur = conn.cursor()
+    # Agents avec infos client
+    cur.execute("""
+        SELECT a.*, c.nom_magasin,
+               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
+        FROM agents_pc a
+        LEFT JOIN clients c ON c.id = a.client_id
+        ORDER BY a.last_seen DESC
+    """)
+    agents = [dict(r) for r in cur.fetchall()]
+    # Incidents non lus
+    cur.execute("""
+        SELECT i.*, c.nom_magasin FROM agents_incidents i
+        LEFT JOIN clients c ON c.id=i.client_id
+        WHERE i.lu=FALSE ORDER BY i.created_at DESC LIMIT 50
+    """)
+    incidents = [dict(r) for r in cur.fetchall()]
+    # Marquer comme lus
+    cur.execute("UPDATE agents_incidents SET lu=TRUE WHERE lu=FALSE")
+    cur.execute("SELECT * FROM clients ORDER BY nom_magasin")
+    clients_list = [dict(c) for c in cur.fetchall()]
+    conn.commit(); cur.close(); conn.close()
+
+    # Calculer statut visuel
+    for a in agents:
+        mins = float(a.get("minutes_inactif") or 999)
+        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
+        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
+
+    for i in incidents:
+        i["created_at_str"] = str(i.get("created_at",""))[:16]
+
+    return render_template("agents.html",
+                           agents=agents, incidents=incidents,
+                           clients_list=clients_list,
+                           nb_incidents=len(incidents))
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

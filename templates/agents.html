@@ -193,15 +193,31 @@ body{background:#F5F6FA;color:#111827;font-family:'Segoe UI',Arial,sans-serif;mi
 </div>
 
 <script>
+function showToast(msg, ok) {
+  let t = document.getElementById('_toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_toast';
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1E293B;color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:opacity .3s';
+    document.body.appendChild(t);
+  }
+  t.style.background = ok ? '#16a34a' : '#dc2626';
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => { t.style.opacity = '0'; }, 4000);
+}
+
 function envoyerCmd(lk, action) {
-  if (!confirm('Envoyer "' + action + '" au Gardien ?')) return;
   const fd = new FormData();
   fd.append('license_key', lk);
   fd.append('action', action);
+  console.log('[envoyerCmd] lk='+lk+' action='+action);
   fetch('/api/agent/commande/envoyer', {method:'POST', body:fd})
     .then(r=>r.json())
-    .then(d=>alert(d.message || (d.ok ? 'Commande envoyée' : 'Erreur')));
+    .then(d=>{ console.log('[envoyerCmd] resp='+JSON.stringify(d)); showToast(d.message || (d.ok ? 'Commande envoyée' : 'Erreur'), d.ok); });
 }
+
 function toggleCodeZone(action) {
   document.getElementById('zoneCode').style.display = (action === 'fix_code') ? 'block' : 'none';
 }
@@ -209,22 +225,34 @@ function toggleCodeZone(action) {
 document.getElementById('formCmd').addEventListener('submit', function(e){
   e.preventDefault();
   const fd = new FormData(this);
-  const action = fd.get('action');
+  // Fallback: si FormData ne capture pas la valeur CDP, lire .value directement
+  const lkSelect = this.querySelector('[name="license_key"]');
+  const actionSelect = this.querySelector('[name="action"]');
+  let lk = fd.get('license_key') || lkSelect.value;
+  let action = fd.get('action') || actionSelect.value;
+  console.log('[formCmd] lk='+lk+' action='+action+' fd_lk='+fd.get('license_key'));
+  if (!lk || lk === '') { showToast('Choisir un client', false); return; }
   if (action === 'fix_code') {
     const code = document.getElementById('txtCodePython').value.trim();
-    if (!code) { alert('Veuillez coller le code Python à exécuter.'); return; }
-    fd.append('parametres', JSON.stringify({code: code}));
+    if (!code) { showToast('Veuillez coller le code Python à exécuter.', false); return; }
+    fd.set('license_key', lk);
+    fd.set('action', action);
+    fd.set('parametres', JSON.stringify({code: code}));
+  } else {
+    fd.set('license_key', lk);
+    fd.set('action', action);
   }
+  console.log('[formCmd] sending lk='+fd.get('license_key')+' action='+fd.get('action'));
   fetch('/api/agent/commande/envoyer', {method:'POST', body:fd})
     .then(r=>r.json())
-    .then(d=>alert(d.message || (d.ok ? 'Commande envoyée' : 'Erreur')));
+    .then(d=>{ console.log('[formCmd] resp='+JSON.stringify(d)); showToast(d.message || (d.ok ? 'Commande envoyée' : 'Erreur'), d.ok); })
+    .catch(err=>{ console.error('[formCmd] err='+err); showToast('Erreur réseau', false); });
 });
 
 function deployerTous() {
   const agents = {{ agents | tojson }};
   const enligne = agents.filter(a => a.statut_visuel === 'online');
-  if (!enligne.length) { alert('Aucun agent en ligne.'); return; }
-  if (!confirm('Déployer la mise à jour sur ' + enligne.length + ' agent(s) en ligne ?')) return;
+  if (!enligne.length) { showToast('Aucun agent en ligne.', false); return; }
   let ok = 0, ko = 0;
   const promesses = enligne.map(a => {
     const fd = new FormData();
@@ -236,7 +264,7 @@ function deployerTous() {
       .catch(()=>ko++);
   });
   Promise.all(promesses).then(()=>{
-    alert('Déploiement lancé : ' + ok + ' succès, ' + ko + ' erreur(s).\nLes agents vont se mettre à jour dans les 5 prochaines minutes.');
+    showToast('Déploiement lancé : ' + ok + ' succès, ' + ko + ' erreur(s).', ok > 0);
   });
 }
 </script>

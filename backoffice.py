@@ -283,6 +283,21 @@ def init_db():
         cur.execute("ALTER TABLE alertes_centrales ADD COLUMN IF NOT EXISTS video_stored_url TEXT DEFAULT ''")
     except Exception:
         pass
+    # Table camera_config — configuration par caméra (gestes + IA)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS camera_config (
+        id               SERIAL PRIMARY KEY,
+        magasin_id       INTEGER NOT NULL REFERENCES clients(id),
+        camera_name      TEXT NOT NULL,
+        active           BOOLEAN DEFAULT TRUE,
+        gestes_json      TEXT DEFAULT '{}',
+        confidence_min   REAL DEFAULT 0.65,
+        cooldown_min     INTEGER DEFAULT 5,
+        alertes_max_jour INTEGER DEFAULT 20,
+        updated_at       TIMESTAMP DEFAULT NOW(),
+        UNIQUE(magasin_id, camera_name)
+    )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -1023,6 +1038,24 @@ def api_config():
     try: config = json.loads(config_json) if config_json.strip() else {}
     except Exception: config = {}
     config["nom_magasin"] = client["nom_magasin"]; config["username"] = client["username"]
+    # Inclure la config par caméra (gestes + seuils IA)
+    conn2 = get_db(); cur2 = conn2.cursor()
+    cur2.execute(
+        "SELECT camera_name,active,gestes_json,confidence_min,cooldown_min,alertes_max_jour "
+        "FROM camera_config WHERE magasin_id=%s", (client["id"],)
+    )
+    cam_rows = cur2.fetchall(); cur2.close(); conn2.close()
+    camera_config = {}
+    for cr in cam_rows:
+        try: gestes = json.loads(cr["gestes_json"] or "{}")
+        except Exception: gestes = {}
+        camera_config[cr["camera_name"]] = {
+            "active": bool(cr["active"]), "gestes": gestes,
+            "confidence_min": cr["confidence_min"],
+            "cooldown_min": cr["cooldown_min"],
+            "alertes_max_jour": cr["alertes_max_jour"],
+        }
+    config["camera_config"] = camera_config
     return jsonify({"ok":True,"config":config})
 
 @app.route("/api/register", methods=["POST"])
@@ -1421,6 +1454,58 @@ def api_mobile_clips():
     cur.close(); conn.close()
     return jsonify({"ok":True,"clips":clips})
 
+@app.route("/api/mobile/cameras", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_mobile_cameras():
+    """Retourne la config par caméra (gestes + seuils IA) pour l'app mobile."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT camera_name,active,gestes_json,confidence_min,cooldown_min,alertes_max_jour "
+        "FROM camera_config WHERE magasin_id=%s ORDER BY camera_name", (client_id,)
+    )
+    rows = cur.fetchall(); cur.close(); conn.close()
+    cameras = []
+    for r in rows:
+        try: gestes = json.loads(r["gestes_json"] or "{}")
+        except Exception: gestes = {}
+        cameras.append({
+            "camera_name": r["camera_name"], "active": bool(r["active"]),
+            "gestes": gestes, "confidence_min": r["confidence_min"],
+            "cooldown_min": r["cooldown_min"], "alertes_max_jour": r["alertes_max_jour"],
+        })
+    return jsonify({"ok":True,"cameras":cameras,"global_ia":{"confidence_min":0.65,"cooldown_min":5,"alertes_max_jour":20}})
+
+@app.route("/api/mobile/config-gestes", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_mobile_config_gestes():
+    """Sauvegarde la config gestes/IA par caméra depuis l'app mobile."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    data = request.get_json() or {}
+    cameras = data.get("cameras", [])
+    global_ia = data.get("global_ia", {})
+    conn = get_db(); cur = conn.cursor()
+    for cam in cameras:
+        cam_name = (cam.get("camera_name") or "").strip()
+        if not cam_name: continue
+        active   = bool(cam.get("active", True))
+        gestes_j = json.dumps(cam.get("gestes", {}))
+        conf_min = cam.get("confidence_min", global_ia.get("confidence_min", 0.65))
+        cooldown = cam.get("cooldown_min",   global_ia.get("cooldown_min",   5))
+        max_jour = cam.get("alertes_max_jour", global_ia.get("alertes_max_jour", 20))
+        cur.execute("""
+            INSERT INTO camera_config
+                (magasin_id,camera_name,active,gestes_json,confidence_min,cooldown_min,alertes_max_jour,updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+            ON CONFLICT(magasin_id,camera_name) DO UPDATE SET
+                active=%s,gestes_json=%s,confidence_min=%s,cooldown_min=%s,alertes_max_jour=%s,updated_at=NOW()
+        """, (client_id,cam_name,active,gestes_j,conf_min,cooldown,max_jour,
+              active,gestes_j,conf_min,cooldown,max_jour))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok":True,"message":f"{len(cameras)} caméra(s) configurée(s)"})
+
 def envoyer_push_notifications(client_id, titre, corps, data_extra=None):
     """Envoie une notification push Expo à tous les tokens du client."""
     try:
@@ -1529,109 +1614,4 @@ def api_agent_commandes():
         WHERE license_key=%s AND statut='en_attente'
         ORDER BY created_at ASC
     """, (lk,))
-    cmds = cur.fetchall()
-    # Marquer comme "envoyees"
-    if cmds:
-        ids = [c["id"] for c in cmds]
-        cur.execute("UPDATE agents_commandes SET statut='envoyee' WHERE id=ANY(%s)", (ids,))
-        conn.commit()
-    cur.close(); conn.close()
-    result = []
-    for c in cmds:
-        try:
-            params = json.loads(c["parametres"] or "{}")
-        except Exception:
-            params = {}
-        params["action"] = c["action"]
-        params["_cmd_id"] = c["id"]
-        result.append(params)
-    return jsonify(result)
-
-@app.route("/api/agent/commande/envoyer", methods=["POST"])
-@login_required
-def api_agent_envoyer_commande():
-    """Envoie une commande à un Gardien PC (depuis le backoffice admin)."""
-    lk     = request.form.get("license_key","")
-    action = request.form.get("action","")
-    params = request.form.get("parametres","{}")
-    if not lk or not action:
-        return jsonify({"ok": False, "error": "license_key et action requis"}), 400
-    client_id = _agent_client_id(lk)
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO agents_commandes (client_id, license_key, action, parametres)
-        VALUES (%s,%s,%s,%s)
-    """, (client_id, lk, action, params))
-    conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
-
-@app.route("/api/agent/deployer_tous", methods=["POST"])
-@login_required
-def api_deployer_tous():
-    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
-    conn = get_db(); cur = conn.cursor()
-    # Récupérer tous les agents en ligne (vu < 10 min)
-    cur.execute("""
-        SELECT a.license_key, c.nom_magasin FROM agents_status a
-        JOIN clients c ON c.id = a.client_id
-        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
-    """)
-    agents = cur.fetchall()
-    nb = 0
-    for a in agents:
-        cur.execute("""
-            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
-            SELECT c.id, %s, 'mettre_a_jour', '{}'
-            FROM clients c WHERE c.license_key = %s
-        """, (a["license_key"], a["license_key"]))
-        nb += 1
-    conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
-
-@app.route("/agents")
-@login_required
-def supervision_agents():
-    """Page de supervision de tous les Gardiens PC."""
-    conn = get_db(); cur = conn.cursor()
-    # Agents avec infos client
-    cur.execute("""
-        SELECT a.*, c.nom_magasin,
-               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
-        FROM agents_pc a
-        LEFT JOIN clients c ON c.id = a.client_id
-        ORDER BY a.last_seen DESC
-    """)
-    agents = [dict(r) for r in cur.fetchall()]
-    # Incidents non lus
-    cur.execute("""
-        SELECT i.*, c.nom_magasin FROM agents_incidents i
-        LEFT JOIN clients c ON c.id=i.client_id
-        WHERE i.lu=FALSE ORDER BY i.created_at DESC LIMIT 50
-    """)
-    incidents = [dict(r) for r in cur.fetchall()]
-    # Marquer comme lus
-    cur.execute("UPDATE agents_incidents SET lu=TRUE WHERE lu=FALSE")
-    cur.execute("SELECT * FROM clients ORDER BY nom_magasin")
-    clients_list = [dict(c) for c in cur.fetchall()]
-    conn.commit(); cur.close(); conn.close()
-
-    # Calculer statut visuel
-    for a in agents:
-        mins = float(a.get("minutes_inactif") or 999)
-        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
-        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
-
-    for i in incidents:
-        i["created_at_str"] = str(i.get("created_at",""))[:16]
-
-    return render_template("agents.html",
-                           agents=agents, incidents=incidents,
-                           clients_list=clients_list,
-                           nb_incidents=len(incidents))
-
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+    cmd

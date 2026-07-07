@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="30">
+<meta http-equiv="refresh" content="3600">
 <title>RadarIA — Agents PC</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -215,30 +215,4 @@ document.getElementById('formCmd').addEventListener('submit', function(e){
     if (!code) { alert('Veuillez coller le code Python à exécuter.'); return; }
     fd.append('parametres', JSON.stringify({code: code}));
   }
-  fetch('/api/agent/commande/envoyer', {method:'POST', body:fd})
-    .then(r=>r.json())
-    .then(d=>alert(d.message || (d.ok ? 'Commande envoyée' : 'Erreur')));
-});
-
-function deployerTous() {
-  const agents = {{ agents | tojson }};
-  const enligne = agents.filter(a => a.statut_visuel === 'online');
-  if (!enligne.length) { alert('Aucun agent en ligne.'); return; }
-  if (!confirm('Déployer la mise à jour sur ' + enligne.length + ' agent(s) en ligne ?')) return;
-  let ok = 0, ko = 0;
-  const promesses = enligne.map(a => {
-    const fd = new FormData();
-    fd.append('license_key', a.license_key);
-    fd.append('action', 'mettre_a_jour');
-    return fetch('/api/agent/commande/envoyer', {method:'POST', body:fd})
-      .then(r=>r.json())
-      .then(d=>{ if(d.ok) ok++; else ko++; })
-      .catch(()=>ko++);
-  });
-  Promise.all(promesses).then(()=>{
-    alert('Déploiement lancé : ' + ok + ' succès, ' + ko + ' erreur(s).\nLes agents vont se mettre à jour dans les 5 prochaines minutes.');
-  });
-}
-</script>
-</body>
-</html>
+  fetch('/api/agent/commande/envoyer', {method:'POST', body:

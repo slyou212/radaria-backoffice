@@ -1614,4 +1614,109 @@ def api_agent_commandes():
         WHERE license_key=%s AND statut='en_attente'
         ORDER BY created_at ASC
     """, (lk,))
-    cmd
+    cmds = cur.fetchall()
+    # Marquer comme "envoyees"
+    if cmds:
+        ids = [c["id"] for c in cmds]
+        cur.execute("UPDATE agents_commandes SET statut='envoyee' WHERE id=ANY(%s)", (ids,))
+        conn.commit()
+    cur.close(); conn.close()
+    result = []
+    for c in cmds:
+        try:
+            params = json.loads(c["parametres"] or "{}")
+        except Exception:
+            params = {}
+        params["action"] = c["action"]
+        params["_cmd_id"] = c["id"]
+        result.append(params)
+    return jsonify(result)
+
+@app.route("/api/agent/commande/envoyer", methods=["POST"])
+@login_required
+def api_agent_envoyer_commande():
+    """Envoie une commande à un Gardien PC (depuis le backoffice admin)."""
+    lk     = request.form.get("license_key","")
+    action = request.form.get("action","")
+    params = request.form.get("parametres","{}")
+    if not lk or not action:
+        return jsonify({"ok": False, "error": "license_key et action requis"}), 400
+    client_id = _agent_client_id(lk)
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+        VALUES (%s,%s,%s,%s)
+    """, (client_id, lk, action, params))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
+
+@app.route("/api/agent/deployer_tous", methods=["POST"])
+@login_required
+def api_deployer_tous():
+    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
+    conn = get_db(); cur = conn.cursor()
+    # Récupérer tous les agents en ligne (vu < 10 min)
+    cur.execute("""
+        SELECT a.license_key, c.nom_magasin FROM agents_status a
+        JOIN clients c ON c.id = a.client_id
+        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
+    """)
+    agents = cur.fetchall()
+    nb = 0
+    for a in agents:
+        cur.execute("""
+            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+            SELECT c.id, %s, 'mettre_a_jour', '{}'
+            FROM clients c WHERE c.license_key = %s
+        """, (a["license_key"], a["license_key"]))
+        nb += 1
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
+
+@app.route("/agents")
+@login_required
+def supervision_agents():
+    """Page de supervision de tous les Gardiens PC."""
+    conn = get_db(); cur = conn.cursor()
+    # Agents avec infos client
+    cur.execute("""
+        SELECT a.*, c.nom_magasin,
+               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
+        FROM agents_pc a
+        LEFT JOIN clients c ON c.id = a.client_id
+        ORDER BY a.last_seen DESC
+    """)
+    agents = [dict(r) for r in cur.fetchall()]
+    # Incidents non lus
+    cur.execute("""
+        SELECT i.*, c.nom_magasin FROM agents_incidents i
+        LEFT JOIN clients c ON c.id=i.client_id
+        WHERE i.lu=FALSE ORDER BY i.created_at DESC LIMIT 50
+    """)
+    incidents = [dict(r) for r in cur.fetchall()]
+    # Marquer comme lus
+    cur.execute("UPDATE agents_incidents SET lu=TRUE WHERE lu=FALSE")
+    cur.execute("SELECT * FROM clients ORDER BY nom_magasin")
+    clients_list = [dict(c) for c in cur.fetchall()]
+    conn.commit(); cur.close(); conn.close()
+
+    # Calculer statut visuel
+    for a in agents:
+        mins = float(a.get("minutes_inactif") or 999)
+        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
+        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
+
+    for i in incidents:
+        i["created_at_str"] = str(i.get("created_at",""))[:16]
+
+    return render_template("agents.html",
+                           agents=agents, incidents=incidents,
+                           clients_list=clients_list,
+                           nb_incidents=len(incidents))
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

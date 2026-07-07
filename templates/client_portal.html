@@ -7,32 +7,32 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #05050f;
-      color: #e0e0e0;
+      background: #F5F6FA;
+      color: #111827;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       min-height: 100vh;
     }
 
     /* ── Header ── */
     .header {
-      background: linear-gradient(135deg, #0d0d2b, #1a1a4a);
+      background: #FFFFFF;
       padding: 18px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid #1a1a3a;
+      border-bottom: 1px solid #E5E7EB;
       position: sticky;
       top: 0;
       z-index: 10;
     }
     .logo { display: flex; align-items: center; gap: 12px; }
     .logo-icon { font-size: 26px; }
-    .logo-text { color: #7b8cde; font-size: 20px; font-weight: 700; letter-spacing: .03em; line-height: 1.1; }
-    .logo-sub  { color: #444; font-size: 11px; }
+    .logo-text { color: #3b4fd8; font-size: 20px; font-weight: 700; letter-spacing: .03em; line-height: 1.1; }
+    .logo-sub  { color: #9CA3AF; font-size: 11px; }
     .logout-btn {
-      background: transparent;
-      border: 1px solid #2a2a4a;
-      color: #666;
+      background: #F3F4F6;
+      border: 1px solid #E5E7EB;
+      color: #6B7280;
       padding: 7px 16px;
       border-radius: 6px;
       cursor: pointer;
@@ -40,27 +40,28 @@
       text-decoration: none;
       transition: border-color .2s, color .2s;
     }
-    .logout-btn:hover { border-color: #444; color: #aaa; }
+    .logout-btn:hover { border-color: #D1D5DB; color: #111827; }
 
     /* ── Layout ── */
     .container { max-width: 920px; margin: 0 auto; padding: 28px 16px 40px; }
     .welcome { margin-bottom: 24px; }
-    .welcome h1 { font-size: 22px; color: #fff; margin-bottom: 4px; }
-    .welcome p  { color: #555; font-size: 14px; }
+    .welcome h1 { font-size: 22px; color: #111827; margin-bottom: 4px; }
+    .welcome p  { color: #9CA3AF; font-size: 14px; }
 
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     @media (max-width: 620px) { .grid-2 { grid-template-columns: 1fr; } }
 
     /* ── Cards ── */
     .card {
-      background: #0d0d2b;
-      border: 1px solid #1a1a3a;
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
       border-radius: 12px;
       padding: 20px;
       margin-bottom: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
     .card-title {
-      color: #444;
+      color: #9CA3AF;
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: .1em;
@@ -74,12 +75,12 @@
       justify-content: space-between;
       align-items: center;
       padding: 9px 0;
-      border-bottom: 1px solid #0f0f25;
+      border-bottom: 1px solid #F3F4F6;
       font-size: 14px;
     }
     .info-row:last-child { border-bottom: none; }
-    .info-label { color: #555; }
-    .info-value { color: #e0e0e0; font-weight: 500; }
+    .info-label { color: #6B7280; }
+    .info-value { color: #111827; font-weight: 500; }
 
     /* ── Badges ── */
     .badge {
@@ -89,26 +90,26 @@
       font-weight: 600;
       white-space: nowrap;
     }
-    .badge-green  { background: #0d3a1f; color: #4caf50; }
-    .badge-orange { background: #3a2a0d; color: #ff9800; }
-    .badge-red    { background: #3a0d0d; color: #f44336; }
-    .badge-gray   { background: #1a1a1a; color: #666; }
+    .badge-green  { background: #F0FDF4; color: #16a34a; border: 1px solid #BBF7D0; }
+    .badge-orange { background: #FFF7ED; color: #EA580C; border: 1px solid #FED7AA; }
+    .badge-red    { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+    .badge-gray   { background: #F3F4F6; color: #6B7280; border: 1px solid #E5E7EB; }
 
     /* ── Tables ── */
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th {
-      color: #3a3a5a;
+      color: #9CA3AF;
       font-weight: 600;
       text-align: left;
       padding: 8px 10px;
-      border-bottom: 1px solid #1a1a3a;
+      border-bottom: 1px solid #E5E7EB;
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: .04em;
     }
-    td { padding: 11px 10px; border-bottom: 1px solid #0f0f25; vertical-align: middle; }
+    td { padding: 11px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255,255,255,.015); }
+    tr:hover td { background: #F9FAFB; }
 
     /* ── Status dot ── */
     .dot {
@@ -118,8 +119,8 @@
       margin-right: 5px;
       vertical-align: middle;
     }
-    .dot-green { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
-    .dot-gray  { background: #333; }
+    .dot-green { background: #16a34a; box-shadow: 0 0 6px #16a34a; }
+    .dot-gray  { background: #D1D5DB; }
 
     /* ── Total bar ── */
     .total-bar {
@@ -127,14 +128,14 @@
       justify-content: space-between;
       align-items: center;
       padding: 12px 10px 0;
-      border-top: 1px solid #1a1a3a;
+      border-top: 1px solid #E5E7EB;
       margin-top: 6px;
       font-size: 14px;
     }
-    .total-impayee { color: #f44336; font-weight: 700; font-size: 16px; }
+    .total-impayee { color: #DC2626; font-weight: 700; font-size: 16px; }
 
     /* ── Empty state ── */
-    .empty { color: #2a2a4a; text-align: center; padding: 24px; font-size: 13px; }
+    .empty { color: #9CA3AF; text-align: center; padding: 24px; font-size: 13px; }
 
     /* ── Expired / logged-out page ── */
     .full-center {
@@ -147,18 +148,18 @@
       padding: 40px 20px;
     }
     .big-icon   { font-size: 72px; margin-bottom: 24px; }
-    .big-title  { font-size: 24px; color: #fff; margin-bottom: 12px; }
-    .big-text   { color: #555; font-size: 15px; max-width: 440px; line-height: 1.7; }
+    .big-title  { font-size: 24px; color: #111827; margin-bottom: 12px; }
+    .big-text   { color: #6B7280; font-size: 15px; max-width: 440px; line-height: 1.7; }
 
     /* ── Footer ── */
     .footer {
       text-align: center;
-      color: #2a2a4a;
+      color: #D1D5DB;
       font-size: 11px;
       padding-top: 8px;
     }
-    .footer a { color: #3a3a6a; text-decoration: none; }
-    .footer a:hover { color: #7b8cde; }
+    .footer a { color: #9CA3AF; text-decoration: none; }
+    .footer a:hover { color: #3b4fd8; }
   </style>
 </head>
 <body>

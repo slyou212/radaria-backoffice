@@ -10,17 +10,17 @@
 {% if action == 'nouveau' %}
 <!-- RECHERCHE SIRET -->
 <div class="form-card" style="margin-bottom:16px">
-  <div style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">🔍 Recherche entreprise par SIRET</div>
+  <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">🔍 Recherche entreprise par SIRET</div>
   <div style="display:flex;gap:10px;align-items:flex-end">
     <div style="flex:1">
-      <label style="color:#aaa;font-size:13px;margin-bottom:6px;display:block">Numéro SIRET (14 chiffres)</label>
+      <label style="color:#374151;font-size:13px;margin-bottom:6px;display:block;font-weight:600">Numéro SIRET (14 chiffres)</label>
       <input type="text" id="siret_input" placeholder="ex: 83814361700034" maxlength="14"
-             style="width:100%;background:#1a1a2e;border:1px solid #333;border-radius:10px;
-                    padding:12px 16px;color:#fff;font-size:15px;box-sizing:border-box"
+             style="width:100%;background:#FFFFFF;border:1px solid #D1D5DB;border-radius:10px;
+                    padding:12px 16px;color:#111827;font-size:15px;box-sizing:border-box"
              oninput="this.value=this.value.replace(/\D/g,'')">
     </div>
     <button type="button" onclick="rechercherSiret()"
-            style="background:#e74c3c;color:#fff;border:none;border-radius:10px;
+            style="background:#3b4fd8;color:#fff;border:none;border-radius:10px;
                    padding:12px 24px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap">
       Rechercher
     </button>
@@ -62,8 +62,8 @@
       <input type="hidden" name="forme_juridique" id="f_forme_juridique" value="">
       <input type="hidden" name="activite" id="f_activite" value="">
 
-      <div style="grid-column:1/-1;border-top:1px solid #1a1a2e;padding-top:16px;margin-top:4px">
-        <div style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">Accès application</div>
+      <div style="grid-column:1/-1;border-top:1px solid #E5E7EB;padding-top:16px;margin-top:4px">
+        <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">Accès application</div>
       </div>
 
       {% if action == 'nouveau' %}
@@ -90,8 +90,8 @@
       </div>
       {% endif %}
 
-      <div style="grid-column:1/-1;border-top:1px solid #1a1a2e;padding-top:16px;margin-top:4px">
-        <div style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">Contrat</div>
+      <div style="grid-column:1/-1;border-top:1px solid #E5E7EB;padding-top:16px;margin-top:4px">
+        <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">Contrat</div>
       </div>
       <div class="form-group">
         <label>Début contrat</label>
@@ -106,16 +106,16 @@
         <textarea name="notes">{{ client.notes if client else '' }}</textarea>
       </div>
 
-      <div style="grid-column:1/-1;border-top:1px solid #1a1a2e;padding-top:16px;margin-top:4px">
+      <div style="grid-column:1/-1;border-top:1px solid #E5E7EB;padding-top:16px;margin-top:4px">
         <div style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">📷 Configuration caméras (JSON)</div>
-        <div style="color:#555;font-size:12px;margin-bottom:12px">Stockée dans le backoffice — le PC client la télécharge automatiquement au démarrage via la license key.</div>
+        <div style="color:#9CA3AF;font-size:12px;margin-bottom:12px">Stockée dans le backoffice — le PC client la télécharge automatiquement au démarrage via la license key.</div>
       </div>
       <div class="form-group full">
         <label>Config JSON (caméras + seuils)</label>
         <textarea name="config_json" id="config_json" rows="10" style="font-family:monospace;font-size:12px">{{ client.config_json if client else '' }}</textarea>
         <div style="margin-top:8px;display:flex;gap:8px">
-          <button type="button" onclick="genererConfigDefaut()" style="background:#1a3a2a;color:#27ae60;border:1px solid #27ae60;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer">⚡ Générer config vide</button>
-          <button type="button" onclick="validerJson()" style="background:#1a1a3a;color:#3498db;border:1px solid #3498db;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer">✅ Valider JSON</button>
+          <button type="button" onclick="genererConfigDefaut()" style="background:#F0FDF4;color:#16a34a;border:1px solid #BBF7D0;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">⚡ Générer config vide</button>
+          <button type="button" onclick="validerJson()" style="background:#EFF6FF;color:#3b82f6;border:1px solid #BFDBFE;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">✅ Valider JSON</button>
         </div>
         <div id="json_status" style="margin-top:6px;font-size:12px"></div>
       </div>
@@ -173,19 +173,19 @@ async function rechercherSiret() {
 
   if (siret.length !== 14) {
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = '<div style="color:#e74c3c;padding:10px;background:#1a0a0a;border-radius:8px">⚠️ Le SIRET doit contenir exactement 14 chiffres.</div>';
+    resultDiv.innerHTML = '<div style="color:#DC2626;padding:10px;background:#FEF2F2;border-radius:8px;border:1px solid #FECACA">⚠️ Le SIRET doit contenir exactement 14 chiffres.</div>';
     return;
   }
 
   resultDiv.style.display = 'block';
-  resultDiv.innerHTML = '<div style="color:#aaa;padding:10px">⏳ Recherche en cours...</div>';
+  resultDiv.innerHTML = '<div style="color:#9CA3AF;padding:10px">⏳ Recherche en cours...</div>';
 
   try {
     const resp = await fetch(`/api/siret/${siret}`);
     const data = await resp.json();
 
     if (data.error) {
-      resultDiv.innerHTML = `<div style="color:#e74c3c;padding:10px;background:#1a0a0a;border-radius:8px">❌ ${data.error}</div>`;
+      resultDiv.innerHTML = `<div style="color:#DC2626;padding:10px;background:#FEF2F2;border-radius:8px;border:1px solid #FECACA">❌ ${data.error}</div>`;
       return;
     }
 
@@ -207,20 +207,20 @@ async function rechercherSiret() {
 
     // Afficher un résumé
     resultDiv.innerHTML = `
-      <div style="background:#0a1a0a;border:1px solid #27ae60;border-radius:8px;padding:14px">
-        <div style="color:#27ae60;font-weight:700;margin-bottom:10px">✅ Entreprise trouvée — formulaire pré-rempli</div>
+      <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:14px">
+        <div style="color:#16a34a;font-weight:700;margin-bottom:10px">✅ Entreprise trouvée — formulaire pré-rempli</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
-          <div><span style="color:#666">Raison sociale :</span> <span style="color:#ddd">${data.nom || '—'}</span></div>
-          <div><span style="color:#666">SIRET :</span> <span style="color:#ddd;font-family:monospace">${data.siret || '—'}</span></div>
-          <div><span style="color:#666">Forme juridique :</span> <span style="color:#ddd">${data.forme_juridique || '—'}</span></div>
-          <div><span style="color:#666">Activité :</span> <span style="color:#ddd">${data.activite || '—'}</span></div>
-          <div style="grid-column:1/-1"><span style="color:#666">Adresse :</span> <span style="color:#ddd">${data.adresse || '—'}</span></div>
-          ${data.contact_nom ? `<div><span style="color:#666">Dirigeant :</span> <span style="color:#ddd">${data.contact_nom}</span></div>` : ''}
+          <div><span style="color:#9CA3AF">Raison sociale :</span> <span style="color:#111827">${data.nom || '—'}</span></div>
+          <div><span style="color:#9CA3AF">SIRET :</span> <span style="color:#111827;font-family:monospace">${data.siret || '—'}</span></div>
+          <div><span style="color:#9CA3AF">Forme juridique :</span> <span style="color:#111827">${data.forme_juridique || '—'}</span></div>
+          <div><span style="color:#9CA3AF">Activité :</span> <span style="color:#111827">${data.activite || '—'}</span></div>
+          <div style="grid-column:1/-1"><span style="color:#9CA3AF">Adresse :</span> <span style="color:#111827">${data.adresse || '—'}</span></div>
+          ${data.contact_nom ? `<div><span style="color:#9CA3AF">Dirigeant :</span> <span style="color:#111827">${data.contact_nom}</span></div>` : ''}
         </div>
-        <div style="color:#888;font-size:12px;margin-top:10px">Vérifiez et complétez les informations ci-dessous avant de valider.</div>
+        <div style="color:#9CA3AF;font-size:12px;margin-top:10px">Vérifiez et complétez les informations ci-dessous avant de valider.</div>
       </div>`;
   } catch(e) {
-    resultDiv.innerHTML = '<div style="color:#e74c3c;padding:10px;background:#1a0a0a;border-radius:8px">❌ Erreur réseau. Vérifiez votre connexion.</div>';
+    resultDiv.innerHTML = '<div style="color:#DC2626;padding:10px;background:#FEF2F2;border-radius:8px;border:1px solid #FECACA">❌ Erreur réseau. Vérifiez votre connexion.</div>';
   }
 }
 

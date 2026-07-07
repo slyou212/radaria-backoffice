@@ -55,9 +55,9 @@
           {% for c in clients %}
           <tr>
             <td>
-              <a href="/client/{{ c.id }}" style="font-weight:600;color:#fff">{{ c.nom_magasin }}</a>
+              <a href="/client/{{ c.id }}" style="font-weight:600;color:#111827">{{ c.nom_magasin }}</a>
               {% if c.contact_tel %}
-              <div style="color:#555;font-size:12px;margin-top:2px">{{ c.contact_tel }}</div>
+              <div style="color:#9CA3AF;font-size:12px;margin-top:2px">{{ c.contact_tel }}</div>
               {% endif %}
             </td>
             <td>
@@ -78,7 +78,7 @@
               {{ c.cameras_actives }}/{{ c.nb_cameras }}
               {% else %}—{% endif %}
             </td>
-            <td style="color:#666;font-size:12px">
+            <td style="color:#9CA3AF;font-size:12px">
               {% if c.last_seen %}{{ c.last_seen[:16].replace('T',' ') }}{% else %}—{% endif %}
             </td>
             <td>
@@ -89,7 +89,7 @@
             <td>
               {% if c.factures_impayees and c.factures_impayees > 0 %}
               <span class="badge badge-orange">{{ c.factures_impayees }} impayée(s)</span>
-              {% else %}<span style="color:#555">—</span>{% endif %}
+              {% else %}<span style="color:#D1D5DB">—</span>{% endif %}
             </td>
             <td>
               <a href="/client/{{ c.id }}" class="btn btn-secondary btn-sm">Voir</a>
@@ -97,7 +97,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="7" style="text-align:center;color:#555;padding:40px">Aucun client</td></tr>
+          <tr><td colspan="7" style="text-align:center;color:#9CA3AF;padding:40px">Aucun client</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -107,51 +107,51 @@
   <!-- Colonne droite : panneau sinistres -->
   <div style="width:340px;flex-shrink:0">
     <div class="card" style="padding:0;overflow:hidden">
-      <div style="background:linear-gradient(135deg,#1a1a3a,#2a1a0a);padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
-        <div style="font-weight:700;font-size:15px;color:#f59e0b">⚠️ Sinistres</div>
+      <div style="background:#3b4fd8;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-radius:16px 16px 0 0">
+        <div style="font-weight:700;font-size:15px;color:#fff">⚠️ Sinistres</div>
         <div style="display:flex;align-items:center;gap:10px">
-          <a href="/sinistres" style="color:#7b8cde;font-size:12px;text-decoration:none">Voir tout →</a>
-          <a href="#" onclick="event.preventDefault();document.getElementById('modal-sinistre-rapide').style.display='flex'" style="font-size:20px;color:#f59e0b;text-decoration:none;font-weight:700;line-height:1" title="Déclarer un sinistre">＋</a>
+          <a href="/sinistres" style="color:rgba(255,255,255,0.8);font-size:12px;text-decoration:none">Voir tout →</a>
+          <a href="#" onclick="event.preventDefault();document.getElementById('modal-sinistre-rapide').style.display='flex'" style="font-size:20px;color:#fff;text-decoration:none;font-weight:700;line-height:1" title="Déclarer un sinistre">＋</a>
         </div>
       </div>
 
       <!-- Filtres rapides avec compteurs -->
-      <div style="padding:10px 14px;border-bottom:1px solid #1a1a3a;display:flex;gap:6px;flex-wrap:wrap">
-        <a href="/sinistres?statut=ouvert"   style="font-size:11px;padding:3px 8px;border-radius:10px;background:#1e3a2a;color:#4ade80;text-decoration:none">Ouverts{% if stats.sinistres_ouverts > 0 %} <b>{{ stats.sinistres_ouverts }}</b>{% endif %}</a>
-        <a href="/sinistres?statut=en_cours" style="font-size:11px;padding:3px 8px;border-radius:10px;background:#2a2a1a;color:#fbbf24;text-decoration:none">En cours{% if stats.sinistres_en_cours > 0 %} <b>{{ stats.sinistres_en_cours }}</b>{% endif %}</a>
-        <a href="/sinistres?statut=resolu"   style="font-size:11px;padding:3px 8px;border-radius:10px;background:#1a1a3a;color:#7b8cde;text-decoration:none">Résolus{% if stats.sinistres_resolus > 0 %} <b>{{ stats.sinistres_resolus }}</b>{% endif %}</a>
+      <div style="padding:10px 14px;border-bottom:1px solid #E5E7EB;display:flex;gap:6px;flex-wrap:wrap">
+        <a href="/sinistres?statut=ouvert"   style="font-size:11px;padding:3px 8px;border-radius:10px;background:#F0FDF4;color:#16a34a;text-decoration:none;border:1px solid #BBF7D0">Ouverts{% if stats.sinistres_ouverts > 0 %} <b>{{ stats.sinistres_ouverts }}</b>{% endif %}</a>
+        <a href="/sinistres?statut=en_cours" style="font-size:11px;padding:3px 8px;border-radius:10px;background:#FFFBEB;color:#D97706;text-decoration:none;border:1px solid #FDE68A">En cours{% if stats.sinistres_en_cours > 0 %} <b>{{ stats.sinistres_en_cours }}</b>{% endif %}</a>
+        <a href="/sinistres?statut=resolu"   style="font-size:11px;padding:3px 8px;border-radius:10px;background:#EFF2FE;color:#3b4fd8;text-decoration:none;border:1px solid #C7D2FE">Résolus{% if stats.sinistres_resolus > 0 %} <b>{{ stats.sinistres_resolus }}</b>{% endif %}</a>
       </div>
 
       <!-- Liste sinistres -->
       <div style="max-height:520px;overflow-y:auto">
         {% for s in sinistres %}
-        <div style="padding:12px 14px;border-bottom:1px solid #111;{% if s.statut=='ouvert' %}border-left:3px solid #f59e0b{% elif s.statut=='en_cours' %}border-left:3px solid #7b8cde{% elif s.statut=='resolu' %}border-left:3px solid #4ade80{% else %}border-left:3px solid #444{% endif %}">
+        <div style="padding:12px 14px;border-bottom:1px solid #F3F4F6;{% if s.statut=='ouvert' %}border-left:3px solid #D97706{% elif s.statut=='en_cours' %}border-left:3px solid #3b4fd8{% elif s.statut=='resolu' %}border-left:3px solid #16a34a{% else %}border-left:3px solid #E5E7EB{% endif %}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-weight:600;font-size:13px;color:#e0e0e0">{{ s.type }}</span>
+            <span style="font-weight:600;font-size:13px;color:#111827">{{ s.type }}</span>
             <span style="font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600;
-              {% if s.statut=='ouvert' %}background:#3a2500;color:#f59e0b
-              {% elif s.statut=='en_cours' %}background:#1a1a4a;color:#7b8cde
-              {% elif s.statut=='resolu' %}background:#1a3a1a;color:#4ade80
-              {% else %}background:#2a2a2a;color:#888{% endif %}">
+              {% if s.statut=='ouvert' %}background:#FFFBEB;color:#D97706
+              {% elif s.statut=='en_cours' %}background:#EFF2FE;color:#3b4fd8
+              {% elif s.statut=='resolu' %}background:#F0FDF4;color:#16a34a
+              {% else %}background:#F3F4F6;color:#6B7280{% endif %}">
               {{ s.statut | upper }}
             </span>
           </div>
-          <div style="color:#7b8cde;font-size:11px;font-weight:600;margin-bottom:3px">{{ s.nom_magasin }}</div>
+          <div style="color:#3b4fd8;font-size:11px;font-weight:600;margin-bottom:3px">{{ s.nom_magasin }}</div>
           {% if s.description %}
-          <div style="color:#777;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.description }}</div>
+          <div style="color:#9CA3AF;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.description }}</div>
           {% endif %}
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-            <span style="color:#444;font-size:10px">
+            <span style="color:#9CA3AF;font-size:10px">
               {% if s.origine == 'client' %}📱 Client
               {% elif s.origine == 'ia' %}🤖 IA
               {% else %}👤 Admin{% endif %}
               · {{ s.date_declaration }}
             </span>
-            <a href="/client/{{ s.client_id }}#sinistres" style="font-size:11px;color:#7b8cde;text-decoration:none;font-weight:600">Voir →</a>
+            <a href="/client/{{ s.client_id }}#sinistres" style="font-size:11px;color:#3b4fd8;text-decoration:none;font-weight:600">Voir →</a>
           </div>
         </div>
         {% else %}
-        <div style="padding:30px;text-align:center;color:#444;font-size:13px">
+        <div style="padding:30px;text-align:center;color:#9CA3AF;font-size:13px">
           Aucun sinistre enregistré
         </div>
         {% endfor %}
@@ -163,15 +163,15 @@
 
 <!-- Modal déclaration rapide sinistre -->
 <div id="modal-sinistre-rapide" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
-  <div style="background:#0f0f1e;border:1px solid #2a2a4a;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+  <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;padding:24px;width:420px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.12)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
-      <div style="font-weight:700;font-size:16px;color:#f59e0b">⚠️ Déclarer un sinistre</div>
-      <span onclick="document.getElementById('modal-sinistre-rapide').style.display='none'" style="cursor:pointer;color:#666;font-size:20px">✕</span>
+      <div style="font-weight:700;font-size:16px;color:#111827">⚠️ Déclarer un sinistre</div>
+      <span onclick="document.getElementById('modal-sinistre-rapide').style.display='none'" style="cursor:pointer;color:#9CA3AF;font-size:20px">✕</span>
     </div>
     <form method="post" id="form-sinistre-rapide">
       <div style="margin-bottom:12px">
-        <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Client</label>
-        <select name="client_id" id="sel-client-sinistre" required style="width:100%;background:#0a0a1a;border:1px solid #333;border-radius:8px;padding:8px 10px;color:#fff;font-size:13px">
+        <label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;font-weight:600">Client</label>
+        <select name="client_id" id="sel-client-sinistre" required style="width:100%;background:#FFFFFF;border:1px solid #D1D5DB;border-radius:8px;padding:8px 10px;color:#111827;font-size:13px">
           <option value="">-- Choisir --</option>
           {% for c in clients %}
           <option value="{{ c.id }}">{{ c.nom_magasin }}</option>
@@ -179,8 +179,8 @@
         </select>
       </div>
       <div style="margin-bottom:12px">
-        <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Type</label>
-        <select name="type" required style="width:100%;background:#0a0a1a;border:1px solid #333;border-radius:8px;padding:8px 10px;color:#fff;font-size:13px">
+        <label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;font-weight:600">Type</label>
+        <select name="type" required style="width:100%;background:#FFFFFF;border:1px solid #D1D5DB;border-radius:8px;padding:8px 10px;color:#111827;font-size:13px">
           <option value="Vol">Vol</option>
           <option value="Tentative de vol">Tentative de vol</option>
           <option value="Caméra HS">Caméra HS</option>
@@ -190,8 +190,8 @@
         </select>
       </div>
       <div style="margin-bottom:16px">
-        <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Description</label>
-        <textarea name="description" rows="3" style="width:100%;background:#0a0a1a;border:1px solid #333;border-radius:8px;padding:8px 10px;color:#fff;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+        <label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;font-weight:600">Description</label>
+        <textarea name="description" rows="3" style="width:100%;background:#FFFFFF;border:1px solid #D1D5DB;border-radius:8px;padding:8px 10px;color:#111827;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
       </div>
       <input type="hidden" name="origine" value="admin">
       <div style="display:flex;gap:8px;justify-content:flex-end">

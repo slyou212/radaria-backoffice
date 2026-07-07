@@ -1439,6 +1439,40 @@ def api_mobile_push_token():
     conn.commit(); cur.close(); conn.close()
     return jsonify({"ok":True})
 
+@app.route("/api/mobile/snapshots", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_mobile_snapshots():
+    """Retourne le dernier snapshot (base64) par caméra pour l'app mobile."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    snap_dir = SNAP_DIR / str(client_id)
+    if not snap_dir.exists():
+        return jsonify({"ok":True,"snapshots":[]})
+    # Grouper fichiers par caméra et garder le plus récent
+    cam_latest = {}  # cam_name -> (path, mtime)
+    for f in snap_dir.iterdir():
+        if not f.name.endswith('.jpg'):
+            continue
+        # Format: YYYYMMDD_HHMMSS_camname.jpg  (ts = 15 chars, puis _)
+        if len(f.name) < 17:
+            continue
+        cam_key = f.name[16:-4].replace('_', ' ')  # nom caméra lisible
+        mtime = f.stat().st_mtime
+        if cam_key not in cam_latest or mtime > cam_latest[cam_key][1]:
+            cam_latest[cam_key] = (f, mtime)
+    snapshots = []
+    for cam_name, (fpath, mtime) in cam_latest.items():
+        try:
+            img_b64 = base64.b64encode(fpath.read_bytes()).decode()
+            snapshots.append({
+                "camera": cam_name,
+                "image_b64": img_b64,
+                "ts": datetime.fromtimestamp(mtime).strftime("%H:%M:%S"),
+            })
+        except Exception:
+            pass
+    return jsonify({"ok":True,"snapshots":snapshots})
+
 @app.route("/api/mobile/clips", methods=["GET"])
 @limiter.limit("60 per minute")
 def api_mobile_clips():

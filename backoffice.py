@@ -1502,9 +1502,13 @@ def api_mobile_clips():
     client_id = get_mobile_client_id()
     if not client_id: return jsonify({"error":"Authentification requise"}),401
     conn = get_db(); cur = conn.cursor()
-    cur.execute("""SELECT alert_id,type,camera,date,heure,video_url,feedback
+    cur.execute("""SELECT alert_id,type,camera,date,heure,
+                   COALESCE(NULLIF(video_stored_url,''), video_url) AS video_url,
+                   feedback
                    FROM alertes_centrales
-                   WHERE client_id=%s AND video_url IS NOT NULL AND video_url != ''
+                   WHERE client_id=%s
+                     AND (video_url IS NOT NULL AND video_url != ''
+                       OR video_stored_url IS NOT NULL AND video_stored_url != '')
                    ORDER BY date DESC,heure DESC LIMIT 100""", (client_id,))
     clips = [dict(c) for c in cur.fetchall()]
     cur.close(); conn.close()
@@ -1807,9 +1811,4 @@ def supervision_agents():
                            clients_list=clients_list,
                            nb_incidents=len(incidents))
 
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+# =============================================================

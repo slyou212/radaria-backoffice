@@ -237,9 +237,31 @@ def init_db():
         backoffice_ms     INTEGER,
         reseau_ok         BOOLEAN DEFAULT TRUE,
         last_seen         TIMESTAMP DEFAULT NOW(),
-        statut            TEXT DEFAULT 'online'
+        statut            TEXT DEFAULT 'online',
+        UNIQUE(license_key, hostname)
     )
     """)
+    # Migration : supprimer doublons + ajouter contrainte unique sur DB existante
+    try:
+        cur.execute("""
+            DELETE FROM agents_pc a
+            USING agents_pc b
+            WHERE a.id < b.id
+              AND a.license_key = b.license_key
+              AND a.hostname = b.hostname
+        """)
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'agents_pc_lk_host_uniq'
+                ) THEN
+                    ALTER TABLE agents_pc
+                    ADD CONSTRAINT agents_pc_lk_host_uniq UNIQUE (license_key, hostname);
+                END IF;
+            END $$;
+        """)
+    except Exception:
+        pass
     cur.execute("""
     CREATE TABLE IF NOT EXISTS agents_incidents (
         id           SERIAL PRIMARY KEY,
@@ -1619,15 +1641,25 @@ def api_agent_status():
         return jsonify({"ok": False, "error": "license_key manquante"}), 400
     client_id = _agent_client_id(lk)
     conn = get_db(); cur = conn.cursor()
-    # Upsert sur (license_key, hostname)
     hostname = data.get("hostname","")
+    # Vrai UPSERT : 1 seule ligne par (license_key, hostname)
     cur.execute("""
         INSERT INTO agents_pc
             (client_id, license_key, hostname, agent_version,
              surveillance_active, cameras_ok, cameras_total,
              disk_libre_gb, backoffice_ms, reseau_ok, last_seen, statut)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),'online')
-        ON CONFLICT DO NOTHING
+        ON CONFLICT (license_key, hostname) DO UPDATE SET
+            client_id           = EXCLUDED.client_id,
+            surveillance_active = EXCLUDED.surveillance_active,
+            cameras_ok          = EXCLUDED.cameras_ok,
+            cameras_total       = EXCLUDED.cameras_total,
+            disk_libre_gb       = EXCLUDED.disk_libre_gb,
+            backoffice_ms       = EXCLUDED.backoffice_ms,
+            reseau_ok           = EXCLUDED.reseau_ok,
+            last_seen           = NOW(),
+            statut              = 'online',
+            agent_version       = EXCLUDED.agent_version
     """, (client_id, lk, hostname,
           data.get("agent_version","1.0"),
           data.get("surveillance_active", False),
@@ -1636,17 +1668,6 @@ def api_agent_status():
           data.get("disk_libre_gb"),
           data.get("backoffice_ms"),
           data.get("reseau_ok", True)))
-    cur.execute("""
-        UPDATE agents_pc SET
-            surveillance_active=%s, cameras_ok=%s, cameras_total=%s,
-            disk_libre_gb=%s, backoffice_ms=%s, reseau_ok=%s,
-            last_seen=NOW(), statut='online', agent_version=%s
-        WHERE license_key=%s AND hostname=%s
-    """, (data.get("surveillance_active", False),
-          data.get("cameras_ok", 0), data.get("cameras_total", 0),
-          data.get("disk_libre_gb"), data.get("backoffice_ms"),
-          data.get("reseau_ok", True), data.get("agent_version","1.0"),
-          lk, hostname))
     conn.commit(); cur.close(); conn.close()
     return jsonify({"ok": True})
 
@@ -1773,22 +1794,3 @@ def supervision_agents():
     conn.commit(); cur.close(); conn.close()
 
     # Calculer statut visuel
-    for a in agents:
-        mins = float(a.get("minutes_inactif") or 999)
-        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
-        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
-
-    for i in incidents:
-        i["created_at_str"] = str(i.get("created_at",""))[:16]
-
-    return render_template("agents.html",
-                           agents=agents, incidents=incidents,
-                           clients_list=clients_list,
-                           nb_incidents=len(incidents))
-
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

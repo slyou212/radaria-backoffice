@@ -1794,3 +1794,22 @@ def supervision_agents():
     conn.commit(); cur.close(); conn.close()
 
     # Calculer statut visuel
+    for a in agents:
+        mins = float(a.get("minutes_inactif") or 999)
+        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
+        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
+
+    for i in incidents:
+        i["created_at_str"] = str(i.get("created_at",""))[:16]
+
+    return render_template("agents.html",
+                           agents=agents, incidents=incidents,
+                           clients_list=clients_list,
+                           nb_incidents=len(incidents))
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

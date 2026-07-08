@@ -1491,24 +1491,62 @@ def api_mobile_clips():
 @app.route("/api/mobile/cameras", methods=["GET"])
 @limiter.limit("60 per minute")
 def api_mobile_cameras():
-    """Retourne la config par caméra (gestes + seuils IA) pour l'app mobile."""
+    """Retourne la config par caméra (gestes + seuils IA) pour l'app mobile.
+    Priorité : vrais noms depuis config_json du client (= noms utilisés par surveillance.py).
+    Fallback : ce qui est en BDD camera_config.
+    """
     client_id = get_mobile_client_id()
     if not client_id: return jsonify({"error":"Authentification requise"}),401
     conn = get_db(); cur = conn.cursor()
+
+    # 1) Config déjà sauvegardée en BDD (keyed par camera_name)
     cur.execute(
         "SELECT camera_name,active,gestes_json,confidence_min,cooldown_min,alertes_max_jour "
-        "FROM camera_config WHERE magasin_id=%s ORDER BY camera_name", (client_id,)
+        "FROM camera_config WHERE magasin_id=%s", (client_id,)
     )
-    rows = cur.fetchall(); cur.close(); conn.close()
-    cameras = []
-    for r in rows:
+    cam_map = {}
+    for r in cur.fetchall():
         try: gestes = json.loads(r["gestes_json"] or "{}")
         except Exception: gestes = {}
-        cameras.append({
+        cam_map[r["camera_name"]] = {
             "camera_name": r["camera_name"], "active": bool(r["active"]),
             "gestes": gestes, "confidence_min": r["confidence_min"],
             "cooldown_min": r["cooldown_min"], "alertes_max_jour": r["alertes_max_jour"],
-        })
+        }
+
+    # 2) Liste réelle des caméras depuis config_json du client
+    cur.execute("SELECT config_json FROM clients WHERE id=%s", (client_id,))
+    row = cur.fetchone(); cur.close(); conn.close()
+    config_json_str = (row["config_json"] if row else "") or ""
+    try:
+        cfg = json.loads(config_json_str) if config_json_str.strip() else {}
+        cam_list = cfg.get("cameras", [])
+    except Exception:
+        cam_list = []
+
+    DEFAULT_GESTES = {
+        "mouvement_rapide": True, "posture_basse": True, "presence_longue": True,
+        "sac_suspect": True, "consommation": True, "vol_caisse": True,
+        "vol_etalage": True, "vol_a_la_tire": True, "agression": True,
+    }
+
+    cameras = []
+    if cam_list:
+        # Utiliser les vrais noms (= noms que surveillance.py utilise via self.nom)
+        for cam in cam_list:
+            nom = cam.get("nom") or cam.get("name") or f"Camera {cam.get('index', cam.get('id','?'))}"
+            if nom in cam_map:
+                cameras.append(cam_map[nom])
+            else:
+                cameras.append({
+                    "camera_name": nom, "active": True,
+                    "gestes": dict(DEFAULT_GESTES),
+                    "confidence_min": 0.65, "cooldown_min": 5, "alertes_max_jour": 20,
+                })
+    else:
+        # Fallback : retourner ce qui est en BDD
+        cameras = sorted(cam_map.values(), key=lambda x: x["camera_name"])
+
     return jsonify({"ok":True,"cameras":cameras,"global_ia":{"confidence_min":0.65,"cooldown_min":5,"alertes_max_jour":20}})
 
 @app.route("/api/mobile/config-gestes", methods=["POST"])

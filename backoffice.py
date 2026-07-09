@@ -1651,7 +1651,7 @@ def api_mobile_reset_gestes():
         cam_list = []
     DEFAULT_GESTES = json.dumps({
         "mouvement_rapide": True, "posture_basse": True, "presence_longue": True,
-        "sac_suspect": True, "consommation": True,
+        "sac_suspect": True, "consommation": True, "dissimulation": True, "vol_caisse": True,
     })
     for cam in cam_list:
         nom = cam.get("nom") or cam.get("name") or ""

@@ -1633,6 +1633,39 @@ def api_mobile_config_gestes():
     conn.commit(); cur.close(); conn.close()
     return jsonify({"ok":True,"message":f"{len(cameras)} caméra(s) configurée(s)"})
 
+@app.route("/api/mobile/reset-gestes", methods=["POST"])
+@limiter.limit("10 per minute")
+def api_mobile_reset_gestes():
+    """Réinitialise la config gestes — active tout avec paramètres par défaut."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    conn = get_db(); cur = conn.cursor()
+    # Récupérer les noms de caméras depuis config_json
+    cur.execute("SELECT config_json FROM clients WHERE id=%s", (client_id,))
+    row = cur.fetchone()
+    config_json_str = (row["config_json"] if row else "") or ""
+    try:
+        cfg = json.loads(config_json_str) if config_json_str.strip() else {}
+        cam_list = cfg.get("cameras", [])
+    except Exception:
+        cam_list = []
+    DEFAULT_GESTES = json.dumps({
+        "mouvement_rapide": True, "posture_basse": True, "presence_longue": True,
+        "sac_suspect": True, "consommation": True,
+    })
+    for cam in cam_list:
+        nom = cam.get("nom") or cam.get("name") or ""
+        if not nom: continue
+        cur.execute("""
+            INSERT INTO camera_config
+                (magasin_id,camera_name,active,gestes_json,confidence_min,cooldown_min,alertes_max_jour,updated_at)
+            VALUES (%s,%s,TRUE,%s,0.45,1,50,NOW())
+            ON CONFLICT(magasin_id,camera_name) DO UPDATE SET
+                active=TRUE,gestes_json=%s,confidence_min=0.45,cooldown_min=1,alertes_max_jour=50,updated_at=NOW()
+        """, (client_id, nom, DEFAULT_GESTES, DEFAULT_GESTES))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok":True,"message":f"Config gestes réinitialisée ({len(cam_list)} caméra(s)) — tous gestes activés, cooldown 1 min"})
+
 def envoyer_push_notifications(client_id, titre, corps, data_extra=None):
     """Envoie une notification push Expo à tous les tokens du client."""
     try:
@@ -1772,77 +1805,4 @@ def api_agent_envoyer_commande():
     cur.execute("""
         INSERT INTO agents_commandes (client_id, license_key, action, parametres)
         VALUES (%s,%s,%s,%s)
-    """, (client_id, lk, action, params))
-    conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
-
-@app.route("/api/agent/deployer_tous", methods=["POST"])
-@login_required
-def api_deployer_tous():
-    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
-    conn = get_db(); cur = conn.cursor()
-    # Récupérer tous les agents en ligne (vu < 10 min)
-    cur.execute("""
-        SELECT a.license_key, c.nom_magasin FROM agents_status a
-        JOIN clients c ON c.id = a.client_id
-        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
-    """)
-    agents = cur.fetchall()
-    nb = 0
-    for a in agents:
-        cur.execute("""
-            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
-            SELECT c.id, %s, 'mettre_a_jour', '{}'
-            FROM clients c WHERE c.license_key = %s
-        """, (a["license_key"], a["license_key"]))
-        nb += 1
-    conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
-
-@app.route("/agents")
-@login_required
-def supervision_agents():
-    """Page de supervision de tous les Gardiens PC."""
-    conn = get_db(); cur = conn.cursor()
-    # Agents avec infos client
-    cur.execute("""
-        SELECT a.*, c.nom_magasin,
-               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
-        FROM agents_pc a
-        LEFT JOIN clients c ON c.id = a.client_id
-        ORDER BY a.last_seen DESC
-    """)
-    agents = [dict(r) for r in cur.fetchall()]
-    # Incidents non lus
-    cur.execute("""
-        SELECT i.*, c.nom_magasin FROM agents_incidents i
-        LEFT JOIN clients c ON c.id=i.client_id
-        WHERE i.lu=FALSE ORDER BY i.created_at DESC LIMIT 50
-    """)
-    incidents = [dict(r) for r in cur.fetchall()]
-    # Marquer comme lus
-    cur.execute("UPDATE agents_incidents SET lu=TRUE WHERE lu=FALSE")
-    cur.execute("SELECT * FROM clients ORDER BY nom_magasin")
-    clients_list = [dict(c) for c in cur.fetchall()]
-    conn.commit(); cur.close(); conn.close()
-
-    # Calculer statut visuel
-    for a in agents:
-        mins = float(a.get("minutes_inactif") or 999)
-        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
-        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
-
-    for i in incidents:
-        i["created_at_str"] = str(i.get("created_at",""))[:16]
-
-    return render_template("agents.html",
-                           agents=agents, incidents=incidents,
-                           clients_list=clients_list,
-                           nb_incidents=len(incidents))
-
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+    """, (client_id, lk, action, para

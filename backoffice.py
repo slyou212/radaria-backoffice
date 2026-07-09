@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os, secrets, hashlib, json, base64, time, smtplib, io
+import os, secrets, hashlib, json, base64, time, smtplib, io, ftplib
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from email.mime.text import MIMEText
@@ -1268,6 +1268,32 @@ def api_mobile_video_request(alert_id):
     return jsonify({"ok":True,"video_url":None,"status":"pending",
                     "message":"Vidéo en cours de chargement depuis le PC..."})
 
+# Credentials OVH FTP (stockage permanent pour les clips vidéo)
+OVH_FTP_HOST = "ftp.cluster100.hosting.ovh.net"
+OVH_FTP_USER = "radariv"
+OVH_FTP_PASS = "RadariaFTP2026"
+
+def _upload_clip_ovh(video_bytes, client_id, fname):
+    """Upload un clip vidéo vers OVH via FTP. Retourne l'URL publique ou None."""
+    try:
+        ftp = ftplib.FTP()
+        ftp.connect(OVH_FTP_HOST, 21, timeout=60)
+        ftp.login(OVH_FTP_USER, OVH_FTP_PASS)
+        ftp.set_pasv(True)
+        # Créer les dossiers si nécessaire
+        for folder in ["/www/clips", f"/www/clips/{client_id}"]:
+            try:
+                ftp.mkd(folder)
+            except ftplib.error_perm:
+                pass  # dossier déjà existant
+        ftp.cwd(f"/www/clips/{client_id}")
+        ftp.storbinary(f"STOR {fname}", io.BytesIO(video_bytes))
+        ftp.quit()
+        return f"https://radaria.fr/clips/{client_id}/{fname}"
+    except Exception as e:
+        app.logger.warning(f"OVH FTP upload error: {e}")
+        return None
+
 @app.route("/api/video-upload", methods=["POST"])
 def api_video_upload():
     """Le PC surveillance uploade un clip vidéo pour le rendre accessible hors WiFi."""
@@ -1284,15 +1310,18 @@ def api_video_upload():
         return jsonify({"error":"alert_id et video_b64 requis"}),400
     try:
         video_bytes = base64.b64decode(video_b64)
-        # Stocker la vidéo dans le dossier clips du backoffice
-        clips_dir = Path("clips") / str(client["id"])
-        clips_dir.mkdir(parents=True, exist_ok=True)
+        client_id = client["id"]
         fname = f"{alert_id}.mp4"
-        fpath = clips_dir / fname
-        fpath.write_bytes(video_bytes)
-        public_url = f"https://backoffice.radaria.fr/clips/{client['id']}/{fname}"
+        # Upload vers OVH (stockage permanent — ne disparaît pas au redémarrage Railway)
+        public_url = _upload_clip_ovh(video_bytes, client_id, fname)
+        if not public_url:
+            # Fallback : stocker localement (temporaire, mais mieux que rien)
+            clips_dir = Path("clips") / str(client_id)
+            clips_dir.mkdir(parents=True, exist_ok=True)
+            (clips_dir / fname).write_bytes(video_bytes)
+            public_url = f"https://backoffice.radaria.fr/clips/{client_id}/{fname}"
         cur.execute("UPDATE alertes_centrales SET video_stored_url=%s WHERE alert_id=%s AND client_id=%s",
-                    (public_url, alert_id, client["id"]))
+                    (public_url, alert_id, client_id))
         conn.commit()
         cur.close(); conn.close()
         return jsonify({"ok":True,"video_url":public_url})

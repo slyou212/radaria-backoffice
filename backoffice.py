@@ -299,15 +299,6 @@ def init_db():
         updated_at TIMESTAMP DEFAULT NOW()
     )
     """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS pc_status (
-        license_key  TEXT PRIMARY KEY,
-        last_seen    TEXT,
-        ip           TEXT,
-        version      TEXT,
-        nb_cameras   INTEGER DEFAULT 0
-    )
-    """)
     # Colonne video stockée côté serveur (pour accès hors WiFi)
     try:
         cur.execute("ALTER TABLE alertes_centrales ADD COLUMN IF NOT EXISTS video_data BYTEA")
@@ -327,6 +318,15 @@ def init_db():
         alertes_max_jour INTEGER DEFAULT 20,
         updated_at       TIMESTAMP DEFAULT NOW(),
         UNIQUE(magasin_id, camera_name)
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS pc_status (
+        license_key  TEXT PRIMARY KEY,
+        last_seen    TEXT,
+        ip           TEXT,
+        version      TEXT,
+        nb_cameras   INTEGER DEFAULT 0
     )
     """)
     conn.commit()
@@ -1808,4 +1808,136 @@ def api_agent_envoyer_commande():
     action = request.form.get("action","")
     params = request.form.get("parametres","{}")
     if not lk or not action:
-        return jsonify({"ok": False, "error": "lic
+        return jsonify({"ok": False, "error": "license_key et action requis"}), 400
+    client_id = _agent_client_id(lk)
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+        VALUES (%s,%s,%s,%s)
+    """, (client_id, lk, action, params))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "message": f"Commande '{action}' mise en file pour {lk[:8]}..."})
+
+@app.route("/api/agent/deployer_tous", methods=["POST"])
+@login_required
+def api_deployer_tous():
+    """Envoie 'mettre_a_jour' à tous les agents actifs (EN LIGNE)."""
+    conn = get_db(); cur = conn.cursor()
+    # Récupérer tous les agents en ligne (vu < 10 min)
+    cur.execute("""
+        SELECT a.license_key, c.nom_magasin FROM agents_status a
+        JOIN clients c ON c.id = a.client_id
+        WHERE a.last_seen > NOW() - INTERVAL '10 minutes'
+    """)
+    agents = cur.fetchall()
+    nb = 0
+    for a in agents:
+        cur.execute("""
+            INSERT INTO agents_commandes (client_id, license_key, action, parametres)
+            SELECT c.id, %s, 'mettre_a_jour', '{}'
+            FROM clients c WHERE c.license_key = %s
+        """, (a["license_key"], a["license_key"]))
+        nb += 1
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "nb": nb, "message": f"Mise à jour lancée sur {nb} agent(s) en ligne"})
+
+@app.route("/agents")
+@login_required
+def supervision_agents():
+    """Page de supervision de tous les Gardiens PC."""
+    conn = get_db(); cur = conn.cursor()
+    # Agents avec infos client
+    cur.execute("""
+        SELECT a.*, c.nom_magasin,
+               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
+        FROM agents_pc a
+        LEFT JOIN clients c ON c.id = a.client_id
+        ORDER BY a.last_seen DESC
+    """)
+    agents = [dict(r) for r in cur.fetchall()]
+    # Incidents non lus
+    cur.execute("""
+        SELECT i.*, c.nom_magasin FROM agents_incidents i
+        LEFT JOIN clients c ON c.id=i.client_id
+        WHERE i.lu=FALSE ORDER BY i.created_at DESC LIMIT 50
+    """)
+    incidents = [dict(r) for r in cur.fetchall()]
+    # Marquer comme lus
+    cur.execute("UPDATE agents_incidents SET lu=TRUE WHERE lu=FALSE")
+    cur.execute("SELECT * FROM clients ORDER BY nom_magasin")
+    clients_list = [dict(c) for c in cur.fetchall()]
+    conn.commit(); cur.close(); conn.close()
+
+    # Calculer statut visuel
+    for a in agents:
+        mins = float(a.get("minutes_inactif") or 999)
+        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
+        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
+
+    for i in incidents:
+        i["created_at_str"] = str(i.get("created_at",""))[:16]
+
+    return render_template("agents.html",
+                           agents=agents, incidents=incidents,
+                           clients_list=clients_list,
+                           nb_incidents=len(incidents))
+
+
+# =================================================================
+# API PC STATUS
+# =================================================================
+@app.route("/api/pc/heartbeat", methods=["POST"])
+def pc_heartbeat():
+    """Reçoit un ping de démarrage du PC surveillance — enregistre le statut et envoie une push notif."""
+    data = request.json or {}
+    lk = data.get("license_key", "")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT * FROM clients WHERE license_key=%s", (lk,))
+    client = cur.fetchone()
+    if not client:
+        cur.close(); conn.close()
+        return jsonify({"error": "licence inconnue"}), 403
+    now = datetime.now().isoformat()
+    cur.execute("""
+        INSERT INTO pc_status (license_key, last_seen, ip, version, nb_cameras)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT(license_key) DO UPDATE SET
+            last_seen=EXCLUDED.last_seen, ip=EXCLUDED.ip,
+            version=EXCLUDED.version, nb_cameras=EXCLUDED.nb_cameras
+    """, (lk, now, data.get("ip",""), data.get("version",""), data.get("nb_cameras",0)))
+    conn.commit()
+    try:
+        import threading
+        nb_cam = data.get("nb_cameras", 0)
+        threading.Thread(
+            target=envoyer_push_notifications,
+            args=(client["id"], "PC RadarIA connecte",
+                  f"Surveillance demarree — {nb_cam} camera(s) active(s)"),
+            daemon=True
+        ).start()
+    except Exception:
+        pass
+    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
+    statut_row = cur.fetchone()
+    cur.close(); conn.close()
+    return jsonify({"ok": True, "statut_licence": statut_row["statut"] if statut_row else "inconnu"})
+
+
+@app.route("/api/pc/statut")
+def pc_statut():
+    """Retourne le statut de la licence pour un PC donné."""
+    lk = request.args.get("license_key", "")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
+    client = cur.fetchone()
+    cur.close(); conn.close()
+    if not client:
+        return jsonify({"statut": "inconnu"}), 403
+    return jsonify({"statut": client["statut"]})
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

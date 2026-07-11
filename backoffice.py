@@ -1226,7 +1226,9 @@ def api_mobile_alertes():
     if not client_id: return jsonify({"error":"Authentification requise"}),401
     limit = min(int(request.args.get("limit", 50)), 200)
     conn = get_db(); cur = conn.cursor()
-    cur.execute("""SELECT alert_id,type,camera,date,heure,image_path,video_url,feedback,suspect_id,nb_personnes
+    cur.execute("""SELECT alert_id,type,camera,date,heure,image_path,
+        COALESCE(NULLIF(video_stored_url,''), NULLIF(video_url,'')) AS video_url,
+        feedback,suspect_id,nb_personnes
         FROM alertes_centrales WHERE client_id=%s ORDER BY date DESC,heure DESC LIMIT %s""", (client_id, limit))
     alertes = [dict(a) for a in cur.fetchall()]
     cur.execute("SELECT COUNT(*) as n FROM alertes_centrales WHERE client_id=%s AND date=CURRENT_DATE::TEXT", (client_id,))

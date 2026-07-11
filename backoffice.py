@@ -1931,4 +1931,34 @@ def pc_heartbeat():
         import threading
         nb_cam = data.get("nb_cameras", 0)
         threading.Thread(
-          
+            target=envoyer_push_notifications,
+            args=(client["id"], "PC RadarIA connecte",
+                  f"Surveillance demarree — {nb_cam} camera(s) active(s)"),
+            daemon=True
+        ).start()
+    except Exception:
+        pass
+    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
+    statut_row = cur.fetchone()
+    cur.close(); conn.close()
+    return jsonify({"ok": True, "statut_licence": statut_row["statut"] if statut_row else "inconnu"})
+
+
+@app.route("/api/pc/statut")
+def pc_statut():
+    """Retourne le statut de la licence pour un PC donné."""
+    lk = request.args.get("license_key", "")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
+    client = cur.fetchone()
+    cur.close(); conn.close()
+    if not client:
+        return jsonify({"statut": "inconnu"}), 403
+    return jsonify({"statut": client["statut"]})
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

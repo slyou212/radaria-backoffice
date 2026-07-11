@@ -120,22 +120,110 @@ function copyText(elemId, btnId) {
 </div>
 {% endif %}
 
+<!-- Analyse IA — Jauge feedback -->
+{% set sg = stats_globales %}
+{% set total_feedback = (sg.confirmes + sg.faux_positifs) %}
+<div class="card" style="margin-bottom:24px;border-left:4px solid #3b4fd8">
+  <div style="color:#3b4fd8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px">🤖 ANALYSE IA — PRÉCISION DES DÉTECTIONS</div>
+
+  <!-- 4 cartes stats globales -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <div style="background:#F8F9FA;border-radius:10px;padding:14px;border:1px solid #E5E7EB;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#111827">{{ sg.total }}</div>
+      <div style="font-size:11px;color:#6B7280;margin-top:4px;text-transform:uppercase;letter-spacing:.05em">Total alertes</div>
+    </div>
+    <div style="background:#F0FDF4;border-radius:10px;padding:14px;border:1px solid #BBF7D0;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#16a34a">{{ sg.confirmes }}</div>
+      <div style="font-size:11px;color:#16a34a;margin-top:4px;text-transform:uppercase;letter-spacing:.05em">✅ Vols confirmés</div>
+    </div>
+    <div style="background:#FEF2F2;border-radius:10px;padding:14px;border:1px solid #FECACA;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#DC2626">{{ sg.faux_positifs }}</div>
+      <div style="font-size:11px;color:#DC2626;margin-top:4px;text-transform:uppercase;letter-spacing:.05em">❌ Faux positifs</div>
+    </div>
+    <div style="background:#F9FAFB;border-radius:10px;padding:14px;border:1px solid #E5E7EB;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#9CA3AF">{{ sg.sans_retour }}</div>
+      <div style="font-size:11px;color:#9CA3AF;margin-top:4px;text-transform:uppercase;letter-spacing:.05em">⬜ Sans retour</div>
+    </div>
+  </div>
+
+  <!-- Barre de précision -->
+  {% if total_feedback > 0 %}
+  {% set pct_ok = (sg.confirmes / total_feedback * 100)|int %}
+  <div style="margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+      <span style="font-size:12px;font-weight:600;color:#111827">Précision sur alertes évaluées ({{ total_feedback }})</span>
+      <span style="font-size:13px;font-weight:700;color:{% if pct_ok >= 70 %}#16a34a{% elif pct_ok >= 40 %}#f59e0b{% else %}#DC2626{% endif %}">
+        {{ pct_ok }}% vraies alertes
+      </span>
+    </div>
+    <div style="height:12px;background:#FEE2E2;border-radius:6px;overflow:hidden">
+      <div style="height:100%;width:{{ pct_ok }}%;background:{% if pct_ok >= 70 %}#16a34a{% elif pct_ok >= 40 %}#f59e0b{% else %}#DC2626{% endif %};border-radius:6px"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px">
+      <span style="font-size:10px;color:#16a34a">{{ sg.confirmes }} confirmés</span>
+      <span style="font-size:10px;color:#DC2626">{{ sg.faux_positifs }} faux positifs</span>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Breakdown par geste -->
+  {% if stats_par_geste %}
+  <div style="color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Détail par type de geste</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Type de geste</th>
+        <th style="text-align:center">Total</th>
+        <th style="text-align:center">✅ Confirmés</th>
+        <th style="text-align:center">❌ Faux positifs</th>
+        <th style="text-align:center">⬜ Sans retour</th>
+        <th style="text-align:center">Précision</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for g in stats_par_geste %}
+      {% set g_eval = g.confirmes + g.faux_positifs %}
+      {% set g_pct = (g.confirmes / g_eval * 100)|int if g_eval > 0 else -1 %}
+      {% set g_attente = g.total - g.confirmes - g.faux_positifs %}
+      <tr>
+        <td><span class="badge badge-red">{{ g.type }}</span></td>
+        <td style="text-align:center;font-weight:600">{{ g.total }}</td>
+        <td style="text-align:center;color:#16a34a;font-weight:600">{{ g.confirmes }}</td>
+        <td style="text-align:center;color:#DC2626;font-weight:600">{{ g.faux_positifs }}</td>
+        <td style="text-align:center;color:#9CA3AF">{{ g_attente }}</td>
+        <td style="text-align:center">
+          {% if g_pct >= 0 %}
+          <span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;
+            background:{% if g_pct >= 70 %}#F0FDF4{% elif g_pct >= 40 %}#FFFBEB{% else %}#FEF2F2{% endif %};
+            color:{% if g_pct >= 70 %}#16a34a{% elif g_pct >= 40 %}#f59e0b{% else %}#DC2626{% endif %};
+            border:1px solid {% if g_pct >= 70 %}#BBF7D0{% elif g_pct >= 40 %}#FDE68A{% else %}#FECACA{% endif %}">
+            {{ g_pct }}%
+          </span>
+          {% else %}
+          <span style="color:#D1D5DB;font-size:11px">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
 <!-- Alertes -->
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-    <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em">🚨 Alertes récentes</div>
+    <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em">🚨 Alertes récentes (50 dernières)</div>
     {% if feedback_stats.total > 0 %}
     <div style="display:flex;gap:8px;align-items:center">
       <span style="font-size:11px;padding:3px 10px;border-radius:10px;background:#F0FDF4;color:#16a34a;font-weight:600;border:1px solid #BBF7D0">
-        ✅ Vol confirmé : {{ feedback_stats.vol }}
-        {% if feedback_stats.total > 0 %}({{ (feedback_stats.vol / feedback_stats.total * 100)|int }}%){% endif %}
+        ✅ {{ feedback_stats.vol }}
       </span>
       <span style="font-size:11px;padding:3px 10px;border-radius:10px;background:#FEF2F2;color:#DC2626;font-weight:600;border:1px solid #FECACA">
-        ❌ Faux positif : {{ feedback_stats.faux }}
-        {% if feedback_stats.total > 0 %}({{ (feedback_stats.faux / feedback_stats.total * 100)|int }}%){% endif %}
+        ❌ {{ feedback_stats.faux }}
       </span>
       <span style="font-size:11px;padding:3px 10px;border-radius:10px;background:#F3F4F6;color:#6B7280;font-weight:600;border:1px solid #E5E7EB">
-        ⬜ Sans retour : {{ feedback_stats.aucun }}
+        ⬜ {{ feedback_stats.aucun }}
       </span>
     </div>
     {% endif %}
@@ -358,3 +446,4 @@ function copyText(elemId, btnId) {
 </div>
 {% endif %}
 {% endblock %}
+                                                                

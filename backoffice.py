@@ -745,22 +745,40 @@ def client_detail(client_id):
     installation = cur.fetchone()
     cur.execute("SELECT * FROM alertes_centrales WHERE client_id=%s ORDER BY date DESC, heure DESC LIMIT 50", (client_id,))
     alertes_raw = cur.fetchall()
-    # Stats feedback
-    VOL_VALS  = {"ok","vol","vrai","oui","1","true","positif"}
-    FAUX_VALS = {"faux","non","0","false","negatif"}
+    # Stats feedback — valeurs réelles stockées par l'app : 'confirme' / 'faux_positif'
     fb_vol = fb_faux = fb_aucun = 0
     alertes = []
     for a in alertes_raw:
         ad = dict(a)
         fb = (ad.get("feedback") or "").lower().strip()
-        if fb in VOL_VALS:
+        if fb == "confirme":
             ad["_fb_type"] = "vol"; fb_vol += 1
-        elif fb in FAUX_VALS:
+        elif fb == "faux_positif":
             ad["_fb_type"] = "faux"; fb_faux += 1
         else:
             ad["_fb_type"] = "aucun"; fb_aucun += 1
         alertes.append(ad)
     feedback_stats = {"vol": fb_vol, "faux": fb_faux, "aucun": fb_aucun, "total": len(alertes)}
+    # Stats globales sur TOUTES les alertes (pas seulement les 50 affichées)
+    cur.execute("""
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN feedback='confirme'     THEN 1 ELSE 0 END) as confirmes,
+               SUM(CASE WHEN feedback='faux_positif' THEN 1 ELSE 0 END) as faux_positifs,
+               SUM(CASE WHEN feedback IS NULL OR feedback='' THEN 1 ELSE 0 END) as sans_retour
+        FROM alertes_centrales WHERE client_id=%s
+    """, (client_id,))
+    _sg = cur.fetchone()
+    stats_globales = dict(_sg) if _sg else {"total":0,"confirmes":0,"faux_positifs":0,"sans_retour":0}
+    # Breakdown par type de geste
+    cur.execute("""
+        SELECT type,
+               COUNT(*) as total,
+               SUM(CASE WHEN feedback='confirme'     THEN 1 ELSE 0 END) as confirmes,
+               SUM(CASE WHEN feedback='faux_positif' THEN 1 ELSE 0 END) as faux_positifs
+        FROM alertes_centrales WHERE client_id=%s
+        GROUP BY type ORDER BY total DESC
+    """, (client_id,))
+    stats_par_geste = [dict(r) for r in cur.fetchall()]
     cur.execute("SELECT * FROM interventions WHERE client_id=%s ORDER BY date DESC", (client_id,))
     interventions = cur.fetchall()
     cur.execute("SELECT * FROM factures WHERE client_id=%s ORDER BY annee DESC, mois DESC", (client_id,))
@@ -791,7 +809,8 @@ def client_detail(client_id):
     return render_template("client_detail.html", client=client, installation=installation,
                            alertes=alertes, interventions=interventions, factures=factures,
                            snapshots=snapshots, contrats=contrats, sinistres=sinistres,
-                           feedback_stats=feedback_stats, client_id=client_id)
+                           feedback_stats=feedback_stats, stats_globales=stats_globales,
+                           stats_par_geste=stats_par_geste, client_id=client_id)
 
 @app.route("/client/<int:client_id>/edit", methods=["GET", "POST"])
 @login_required
@@ -1912,34 +1931,4 @@ def pc_heartbeat():
         import threading
         nb_cam = data.get("nb_cameras", 0)
         threading.Thread(
-            target=envoyer_push_notifications,
-            args=(client["id"], "PC RadarIA connecte",
-                  f"Surveillance demarree — {nb_cam} camera(s) active(s)"),
-            daemon=True
-        ).start()
-    except Exception:
-        pass
-    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
-    statut_row = cur.fetchone()
-    cur.close(); conn.close()
-    return jsonify({"ok": True, "statut_licence": statut_row["statut"] if statut_row else "inconnu"})
-
-
-@app.route("/api/pc/statut")
-def pc_statut():
-    """Retourne le statut de la licence pour un PC donné."""
-    lk = request.args.get("license_key", "")
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("SELECT statut FROM clients WHERE license_key=%s", (lk,))
-    client = cur.fetchone()
-    cur.close(); conn.close()
-    if not client:
-        return jsonify({"statut": "inconnu"}), 403
-    return jsonify({"statut": client["statut"]})
-
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+          

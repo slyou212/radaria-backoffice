@@ -1275,6 +1275,41 @@ def api_mobile_alertes():
                     "nb_cameras":inst["nb_cameras"] if inst else 0,
                     "last_seen":inst["last_seen"] if inst else ""})
 
+@app.route("/api/mobile/push-test", methods=["POST"])
+@limiter.limit("10 per minute")
+def api_mobile_push_test():
+    """Test push notification — envoie une notif de test au client connecté."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as n FROM push_tokens WHERE client_id=%s", (client_id,))
+    n = cur.fetchone()["n"]
+    cur.execute("SELECT token FROM push_tokens WHERE client_id=%s", (client_id,))
+    tokens = [r["token"] for r in cur.fetchall()]
+    cur.close(); conn.close()
+    if not tokens:
+        return jsonify({"ok":False,"tokens_count":0,
+                        "message":"Aucun token enregistre — ouvre l'app pour enregistrer le token push"})
+    import threading
+    threading.Thread(
+        target=envoyer_push_notifications,
+        args=(client_id, "🔔 Test RadarIA", "Si tu vois cette notification, les push fonctionnent !"),
+        daemon=True
+    ).start()
+    return jsonify({"ok":True,"tokens_count":n,"message":f"Notification de test envoyee a {n} appareil(s)"})
+
+@app.route("/api/mobile/push-status", methods=["GET"])
+@limiter.limit("30 per minute")
+def api_mobile_push_status():
+    """Vérifie combien de tokens push sont enregistrés pour ce client."""
+    client_id = get_mobile_client_id()
+    if not client_id: return jsonify({"error":"Authentification requise"}),401
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT token, platform, created_at, updated_at FROM push_tokens WHERE client_id=%s", (client_id,))
+    tokens = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return jsonify({"ok":True,"client_id":client_id,"tokens":tokens,"count":len(tokens)})
+
 @app.route("/api/mobile/status", methods=["GET"])
 @limiter.limit("60 per minute")
 def api_mobile_status():
@@ -1719,16 +1754,26 @@ def envoyer_push_notifications(client_id, titre, corps, data_extra=None):
         cur.execute("SELECT token FROM push_tokens WHERE client_id=%s", (client_id,))
         tokens = [r["token"] for r in cur.fetchall()]
         cur.close(); conn.close()
-        if not tokens: return
+        print(f"[PUSH] client_id={client_id} — {len(tokens)} token(s) en base")
+        if not tokens:
+            print(f"[PUSH] ATTENTION: aucun token enregistre pour client_id={client_id}")
+            return
         messages = [{"to":t,"title":titre,"body":corps,"sound":"default",
                      "data":data_extra or {}} for t in tokens]
         payload = _json.dumps(messages).encode()
         req = urllib.request.Request(
             "https://exp.host/--/api/v2/push/send",
             data=payload,
-            headers={"Content-Type":"application/json","Accept":"application/json"}
+            headers={"Content-Type":"application/json","Accept":"application/json",
+                     "Accept-Encoding":"gzip, deflate"}
         )
-        urllib.request.urlopen(req, timeout=5)
+        resp = urllib.request.urlopen(req, timeout=15)
+        result = _json.loads(resp.read().decode())
+        print(f"[PUSH] Expo reponse: {result}")
+        # Vérifier les erreurs token par token
+        for item in result.get("data", []):
+            if item.get("status") == "error":
+                print(f"[PUSH] Token invalide: {item.get('details',{}).get('error','?')} — {item.get('message','')}")
     except Exception as e:
         print(f"[PUSH] Erreur envoi notifications: {e}")
 
@@ -2116,69 +2161,4 @@ def api_agent_chat_respond():
     """, (lk, msg, msg_type, approbation, repair_id))
     row = cur.fetchone()
     conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True, "id": row["id"]})
-
-
-@app.route("/api/agent/chat/approve/<int:msg_id>", methods=["POST"])
-@login_required
-def api_agent_chat_approve(msg_id):
-    """Backoffice → Agent : approuver ou refuser une réparation."""
-    data     = request.json or {}
-    decision = data.get("decision", "approve")
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("""
-        UPDATE agent_chat SET approuve=%s WHERE id=%s RETURNING id
-    """, (decision == "approve", msg_id))
-    row = cur.fetchone()
-    if not row:
-        cur.close(); conn.close()
-        return jsonify({"ok": False, "error": "message non trouvé"}), 404
-    conn.commit(); cur.close(); conn.close()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/agent/chat/approval_status", methods=["GET"])
-def api_agent_chat_approval_status():
-    """Agent → Backoffice : vérifier les approbations reçues."""
-    lk = request.args.get("license_key", "")
-    if not lk:
-        return jsonify([])
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("""
-        SELECT id, approuve, repair_id, type FROM agent_chat
-        WHERE license_key=%s AND role='agent' AND approbation_requise=TRUE
-              AND approuve IS NOT NULL
-        ORDER BY created_at DESC LIMIT 20
-    """, (lk,))
-    rows = [dict(r) for r in cur.fetchall()]
-    cur.close(); conn.close()
-    return jsonify(rows)
-
-
-@app.route("/api/agent/chat/history", methods=["GET"])
-@login_required
-def api_agent_chat_history():
-    """Backoffice UI : historique du chat pour un agent."""
-    lk    = request.args.get("license_key", "")
-    limit = min(int(request.args.get("limit", 60)), 200)
-    if not lk:
-        return jsonify([])
-    conn = get_db(); cur = conn.cursor()
-    cur.execute("""
-        SELECT id, role, message, type, approbation_requise, approuve, repair_id, created_at
-        FROM agent_chat WHERE license_key=%s
-        ORDER BY created_at DESC LIMIT %s
-    """, (lk, limit))
-    msgs = [dict(r) for r in cur.fetchall()]
-    cur.close(); conn.close()
-    for m in msgs:
-        m["created_at"] = str(m["created_at"])[:16]
-    return jsonify(list(reversed(msgs)))
-
-
-# =================================================================
-# MAIN
-# =================================================================
-init_db()
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+    re

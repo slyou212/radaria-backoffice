@@ -2161,4 +2161,69 @@ def api_agent_chat_respond():
     """, (lk, msg, msg_type, approbation, repair_id))
     row = cur.fetchone()
     conn.commit(); cur.close(); conn.close()
-    re
+    return jsonify({"ok": True, "id": row["id"]})
+
+
+@app.route("/api/agent/chat/approve/<int:msg_id>", methods=["POST"])
+@login_required
+def api_agent_chat_approve(msg_id):
+    """Backoffice → Agent : approuver ou refuser une réparation."""
+    data     = request.json or {}
+    decision = data.get("decision", "approve")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        UPDATE agent_chat SET approuve=%s WHERE id=%s RETURNING id
+    """, (decision == "approve", msg_id))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return jsonify({"ok": False, "error": "message non trouvé"}), 404
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/agent/chat/approval_status", methods=["GET"])
+def api_agent_chat_approval_status():
+    """Agent → Backoffice : vérifier les approbations reçues."""
+    lk = request.args.get("license_key", "")
+    if not lk:
+        return jsonify([])
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT id, approuve, repair_id, type FROM agent_chat
+        WHERE license_key=%s AND role='agent' AND approbation_requise=TRUE
+              AND approuve IS NOT NULL
+        ORDER BY created_at DESC LIMIT 20
+    """, (lk,))
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return jsonify(rows)
+
+
+@app.route("/api/agent/chat/history", methods=["GET"])
+@login_required
+def api_agent_chat_history():
+    """Backoffice UI : historique du chat pour un agent."""
+    lk    = request.args.get("license_key", "")
+    limit = min(int(request.args.get("limit", 60)), 200)
+    if not lk:
+        return jsonify([])
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("""
+        SELECT id, role, message, type, approbation_requise, approuve, repair_id, created_at
+        FROM agent_chat WHERE license_key=%s
+        ORDER BY created_at DESC LIMIT %s
+    """, (lk, limit))
+    msgs = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    for m in msgs:
+        m["created_at"] = str(m["created_at"])[:16]
+    return jsonify(list(reversed(msgs)))
+
+
+# =================================================================
+# MAIN
+# =================================================================
+init_db()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)

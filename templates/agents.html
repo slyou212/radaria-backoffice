@@ -213,13 +213,14 @@ body{background:#F5F6FA;color:#111827;font-family:'Segoe UI',Arial,sans-serif;mi
   </div>
 
   <!-- Chat Agent IA -->
-  {% if agents %}
+  {% if clients_list %}
   <div class="chat-panel">
     <div class="chat-header">
       <h3>💬 Chat avec le Gardien IA</h3>
       <select class="chat-agent-sel" id="chatAgentSel" onchange="chargerChat()">
-        {% for a in agents %}
-        <option value="{{ a.license_key }}">{{ a.nom_magasin or a.hostname }}</option>
+        {% for c in clients_list %}
+        {% set is_online = agents | selectattr('license_key','equalto',c.license_key) | list | length > 0 %}
+        <option value="{{ c.license_key }}">{{ c.nom_magasin }}{% if not is_online %} (hors ligne){% endif %}</option>
         {% endfor %}
       </select>
     </div>

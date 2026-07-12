@@ -178,6 +178,7 @@ function copyText(elemId, btnId) {
         <th style="text-align:center">❌ Faux positifs</th>
         <th style="text-align:center">⬜ Sans retour</th>
         <th style="text-align:center">Précision</th>
+        <th style="text-align:center">Statut IA</th>
       </tr>
     </thead>
     <tbody>
@@ -201,6 +202,17 @@ function copyText(elemId, btnId) {
           </span>
           {% else %}
           <span style="color:#D1D5DB;font-size:11px">—</span>
+          {% endif %}
+        </td>
+        <td style="text-align:center">
+          {% if g_eval < 5 %}
+          <span style="font-size:11px;color:#9CA3AF">⬜ En cours</span>
+          {% elif g_pct >= 55 %}
+          <span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;background:#F0FDF4;color:#16a34a;border:1px solid #BBF7D0">🟢 Actif</span>
+          {% elif g_pct >= 30 %}
+          <span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;background:#FFFBEB;color:#d97706;border:1px solid #FDE68A">🟡 Prudent</span>
+          {% else %}
+          <span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA">🔴 Silence</span>
           {% endif %}
         </td>
       </tr>

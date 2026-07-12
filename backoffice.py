@@ -1927,13 +1927,20 @@ def api_deployer_tous():
 def supervision_agents():
     """Page de supervision de tous les Gardiens PC."""
     conn = get_db(); cur = conn.cursor()
-    # Agents avec infos client
+    # Agents avec infos client — last_seen = max(gardien, surveillance.py)
     cur.execute("""
         SELECT a.*, c.nom_magasin,
-               EXTRACT(EPOCH FROM (NOW()-a.last_seen))/60 AS minutes_inactif
+               GREATEST(a.last_seen, i.last_seen::TIMESTAMP) AS last_seen_effective,
+               EXTRACT(EPOCH FROM (NOW()-GREATEST(a.last_seen, COALESCE(i.last_seen::TIMESTAMP, a.last_seen))))/60 AS minutes_inactif,
+               CASE WHEN i.last_seen IS NOT NULL
+                    THEN EXTRACT(EPOCH FROM (NOW()-i.last_seen::TIMESTAMP))/60
+                    ELSE 999 END AS minutes_surv_inactif,
+               i.statut AS surv_statut,
+               i.cameras_actives, i.nb_cameras
         FROM agents_pc a
         LEFT JOIN clients c ON c.id = a.client_id
-        ORDER BY a.last_seen DESC
+        LEFT JOIN installations i ON i.client_id = a.client_id
+        ORDER BY GREATEST(a.last_seen, COALESCE(i.last_seen::TIMESTAMP, a.last_seen)) DESC
     """)
     agents = [dict(r) for r in cur.fetchall()]
     # Incidents non lus
@@ -1949,11 +1956,23 @@ def supervision_agents():
     clients_list = [dict(c) for c in cur.fetchall()]
     conn.commit(); cur.close(); conn.close()
 
-    # Calculer statut visuel
+    # Calculer statut visuel (gardien OU surveillance.py)
     for a in agents:
         mins = float(a.get("minutes_inactif") or 999)
-        a["statut_visuel"] = "online" if mins < 10 else ("warn" if mins < 60 else "offline")
-        a["last_seen_str"] = str(a.get("last_seen",""))[:16]
+        mins_surv = float(a.get("minutes_surv_inactif") or 999)
+        # Online si gardien récent OU surveillance.py récente (< 10 min)
+        if mins < 10 or mins_surv < 10:
+            a["statut_visuel"] = "online"
+        elif mins < 60 or mins_surv < 60:
+            a["statut_visuel"] = "warn"
+        else:
+            a["statut_visuel"] = "offline"
+        # Surveillance active si l'une des deux sources est récente
+        if not a.get("surveillance_active") and mins_surv < 10:
+            a["surveillance_active"] = True
+        # Afficher last_seen effective
+        ls = a.get("last_seen_effective") or a.get("last_seen")
+        a["last_seen_str"] = str(ls)[:16] if ls else ""
 
     for i in incidents:
         i["created_at_str"] = str(i.get("created_at",""))[:16]

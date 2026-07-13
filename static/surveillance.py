@@ -1210,6 +1210,10 @@ def calibration_loop():
             statuts = data.get("statuts", {})
             if statuts:
                 apprentissage.setdefault("statuts_par_type", {}).update(statuts)
+                # Securite anti-vol : la calibration backoffice ne peut pas silencer un type de vol
+                for _t in TYPES_CRITIQUES_VOL:
+                    if apprentissage["statuts_par_type"].get(_t) == "silence":
+                        apprentissage["statuts_par_type"][_t] = "prudent"
                 _sauvegarder_json(APPRENTISSAGE_FILE, apprentissage)
                 resume = ", ".join(f"{k}={v}" for k, v in statuts.items())
                 logger.info(f"[CALIBRATION] Statuts IA mis a jour: {resume}")

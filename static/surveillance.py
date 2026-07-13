@@ -181,6 +181,14 @@ apprentissage = _charger_json(APPRENTISSAGE_FILE, {
     "seuil_confiance": SEUILS["confiance_detection"]
 })
 
+# Sécurité anti-vol : au démarrage, ré-active tout type de vol critique laissé muet
+# (empêche que le système reste aveugle au vol après une phase de faux positifs)
+TYPES_CRITIQUES_VOL = {"vol_caisse", "dissimulation", "consommation", "sac_suspect"}
+_statuts_init = apprentissage.setdefault("statuts_par_type", {})
+for _t in TYPES_CRITIQUES_VOL:
+    if _statuts_init.get(_t) == "silence":
+        _statuts_init[_t] = "prudent"
+
 # Journal permanent de tous les incidents confirmés (append-only)
 incidents_log = _charger_json(INCIDENTS_LOG_FILE, [])
 
@@ -243,11 +251,18 @@ def _apprentissage_feedback(alerte, feedback_val):
         ratio_faux_type = stat_type["faux"] / total_type
         statuts = apprentissage.setdefault("statuts_par_type", {})
         ancien = statuts.get(typ, "actif")
+        # Types critiques anti-vol : ne doivent JAMAIS devenir muets (plafonnés à "prudent")
         if ratio_faux_type >= 0.75:
-            # ≥75% faux positifs → silencer ce type (plus d'alertes)
-            statuts[typ] = "silence"
-            if ancien != "silence":
-                logger.warning(f"Type '{typ}' SILENCÉ par IA (ratio faux={ratio_faux_type:.0%} sur {total_type} feedbacks)")
+            if typ in TYPES_CRITIQUES_VOL:
+                # Sécurité anti-vol : un type de vol reste toujours audible → prudent max
+                statuts[typ] = "prudent"
+                if ancien != "prudent":
+                    logger.warning(f"Type critique '{typ}' maintenu en PRUDENT (jamais silencé) — ratio faux={ratio_faux_type:.0%} sur {total_type} feedbacks")
+            else:
+                # ≥75% faux positifs (type non critique) → silencer ce type
+                statuts[typ] = "silence"
+                if ancien != "silence":
+                    logger.warning(f"Type '{typ}' SILENCÉ par IA (ratio faux={ratio_faux_type:.0%} sur {total_type} feedbacks)")
         elif ratio_faux_type >= 0.50:
             # 50–75% faux positifs → mode prudent (délai x3)
             statuts[typ] = "prudent"
@@ -922,6 +937,14 @@ def flux(cam_id):
     if not cam:
         return "Camera introuvable", 404
     return Response(cam.flux_mjpeg(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/snap/<cam_id>")
+def snap(cam_id):
+    # Snapshot JPEG unique de la frame courante (le dashboard l'utilise pour les vignettes)
+    cam = cameras.get(cam_id)
+    if not cam or cam.frame is None:
+        return "Camera introuvable", 404
+    return Response(cam.frame, mimetype="image/jpeg")
 
 @app.route("/api/alertes")
 def api_alertes():

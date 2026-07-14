@@ -2072,7 +2072,7 @@ def api_calibration(license_key):
         else:
             faux_rate = (r["faux_positifs"] or 0) / total_eval
             if faux_rate >= 0.70:
-                statut = "silence"
+                statut = "prudent"  # Jamais "silence" — max autorisé = prudent
             elif faux_rate >= 0.45:
                 statut = "prudent"
             else:
@@ -2241,8 +2241,38 @@ def api_agent_chat_history():
 
 
 # =================================================================
+# SEED DEMO APPLE (Guideline 2.1a) — route admin temporaire
+# =================================================================
+@app.route("/admin/seed-demo-apple")
+@login_required
+def seed_demo_apple_route():
+    """Cree/rafraichit le compte demo 'apple.review' pour la review App Store.
+    Reserve a l'admin connecte. Idempotent."""
+    try:
+        from seed_demo_apple import run_seed
+        r = run_seed(get_db, SNAP_DIR, hash_password)
+    except Exception as e:
+        return f"<pre>ERREUR seed: {e}</pre>", 500
+    return (
+        "<html><body style='font-family:system-ui;background:#0f1117;color:#e6e6ec;padding:40px'>"
+        "<h2>Compte demo Apple cree</h2>"
+        "<table style='border-collapse:collapse'>"
+        f"<tr><td style='padding:6px 16px;color:#8aa0ff'>Username</td><td><b>{r['username']}</b></td></tr>"
+        f"<tr><td style='padding:6px 16px;color:#8aa0ff'>Password</td><td><b>{r['password']}</b></td></tr>"
+        f"<tr><td style='padding:6px 16px;color:#8aa0ff'>License key</td><td>{r['license_key']}</td></tr>"
+        f"<tr><td style='padding:6px 16px;color:#8aa0ff'>Alertes</td><td>{r['nb_alertes']}</td></tr>"
+        f"<tr><td style='padding:6px 16px;color:#8aa0ff'>Cameras</td><td>{len(r['snapshots'])}</td></tr>"
+        "</table>"
+        "<p style='color:#9aa'>Colle username + password dans App Store Connect (App Review "
+        "Information), puis reponds au reviewer. Ne pas redeployer avant l'approbation "
+        "(les images cameras vivent sur le disque Railway).</p>"
+        "</body></html>"
+    )
+
+
+# =================================================================
 # MAIN
 # =================================================================
 init_db()
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)

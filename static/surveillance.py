@@ -7,7 +7,12 @@ from pathlib import Path
 from flask import Flask, Response, render_template, render_template_string, jsonify, send_file, request
 from ultralytics import YOLO
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+_ANALYSE_TS = {}
+_NEAR_TS = {}
+_OBJ_TS = {}
+_LOGFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "surveillance.log")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler(_LOGFILE, encoding="utf-8")])
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
@@ -66,6 +71,7 @@ CFG = charger_config()
 LICENSE_KEY    = CFG.get("license_key", "")
 BACKOFFICE_URL = CFG.get("backoffice_url", "")
 SEUILS        = CFG["seuils"]
+TYPES_DESACTIVES = set(SEUILS.get("types_desactives", []))
 DELAI_ALERTE  = CFG.get("delai_entre_alertes_sec", 30)
 DELAI_ALERTE_RAPIDE = CFG.get("delai_alertes_rapides_sec", 15)
 PORT          = CFG.get("dashboard_port", 5000)
@@ -352,6 +358,8 @@ class CameraDetecteur:
         self.actif  = False
         self.derniere_alerte = {}
         self.historique = {}
+        self.model = YOLO("yolov8n.pt")
+        self.model_obj = YOLO("yolov8n.pt")
         # Compteur alertes journalier (reset à minuit)
         self._alertes_today       = {}
         self._alertes_today_date  = datetime.now().strftime("%Y-%m-%d")
@@ -384,6 +392,9 @@ class CameraDetecteur:
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
         self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if self.cap.isOpened():
+            _w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)); _h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            logger.info(f"[INIT] Camera {self.id} ({self.nom}) resolution reelle = {_w}x{_h}")
         ok = self.cap.isOpened()
         if not ok:
             logger.warning(f"Camera {self.id} ({self.nom}) — flux RTSP refusé, reconnexion dans 10s")
@@ -392,7 +403,10 @@ class CameraDetecteur:
         return ok
 
     def envoyer_alerte(self, type_alerte, frame):
+        if type_alerte in TYPES_DESACTIVES:
+            return
         maintenant = time.time()
+        logger.info(f"[DETECTION] {type_alerte} classe sur {self.nom}")
 
         # ── CONFIG GESTES PAR CAMÉRA (depuis backoffice) ──
         with _gestes_lock:
@@ -400,12 +414,14 @@ class CameraDetecteur:
 
         # Caméra désactivée globalement
         if cam_cfg and not cam_cfg.get("active", True):
+            logger.info(f"[BLOQUE] {type_alerte}/{self.nom} - CAMERA_OFF")
             logger.debug(f"[ALERTE BLOQUÉE] {self.nom} — caméra désactivée (active=False dans config backoffice)")
             return
 
         # Ce geste est-il activé pour cette caméra ?
         gestes = cam_cfg.get("gestes", {})
         if gestes and not gestes.get(type_alerte, True):
+            logger.info(f"[BLOQUE] {type_alerte}/{self.nom} - GESTE_OFF")
             logger.debug(f"[ALERTE BLOQUÉE] {self.nom}/{type_alerte} — geste désactivé dans config backoffice")
             return
 
@@ -418,12 +434,14 @@ class CameraDetecteur:
         # Limite alertes par jour par type
         alertes_max = cam_cfg.get("alertes_max_jour", 20) if cam_cfg else 20
         if self._alertes_today.get(type_alerte, 0) >= alertes_max:
+            logger.info(f"[BLOQUE] {type_alerte}/{self.nom} - LIMITE_JOUR")
             return
 
         # ── APPRENTISSAGE PAR TYPE ──
         # Si l'IA a appris que ce type génère trop de faux positifs, on l'ignore
         statut = apprentissage.get("statuts_par_type", {}).get(type_alerte, "actif")
         if statut == "silence":
+            logger.info(f"[BLOQUE] {type_alerte}/{self.nom} - SILENCE")
             return  # Type silencé automatiquement par l'IA
 
         # ── COOLDOWN (depuis config gestes ou valeur globale) ──
@@ -436,6 +454,7 @@ class CameraDetecteur:
             delai = base_delai * 3 if statut == "prudent" else base_delai
 
         if maintenant - self.derniere_alerte.get(type_alerte, 0) < delai:
+            logger.info(f"[BLOQUE] {type_alerte}/{self.nom} - COOLDOWN")
             return
         self.derniere_alerte[type_alerte] = maintenant
         self._alertes_today[type_alerte]  = self._alertes_today.get(type_alerte, 0) + 1
@@ -532,7 +551,9 @@ class CameraDetecteur:
 
             # Collecter toutes les frames d'abord
             with self.buffer_lock:
-                frames_avant = list(self.frame_buffer)
+                _buf_avant = list(self.frame_buffer)
+            frames_avant = [cv2.imdecode(np.frombuffer(_b, np.uint8), cv2.IMREAD_COLOR) for _b in _buf_avant]
+            frames_avant = [f for f in frames_avant if f is not None]
 
             # Frames post-alerte
             frames_apres = [trigger_frame]
@@ -588,7 +609,15 @@ class CameraDetecteur:
             with _gestes_lock:
                 _ccfg = dict(CAMERA_GESTES_CONFIG.get(self.nom, {}))
             conf_min = _ccfg.get("confidence_min", self.seuil_conf) if _ccfg else self.seuil_conf
-            res = model.track(frame, classes=[0], conf=conf_min, persist=True, verbose=False)
+            res = self.model.track(frame, classes=[0], conf=conf_min, persist=True, verbose=False)
+            try:
+                import time as _t
+                _n = len(res[0].boxes) if (res and len(res)>0 and getattr(res[0],"boxes",None) is not None) else 0
+                if _t.time() - _ANALYSE_TS.get(self.nom, 0) >= 10:
+                    _ANALYSE_TS[self.nom] = _t.time()
+                    logger.info(f"[ANALYSE] {_n} pers sur {self.nom} | ids={None if res[0].boxes.id is None else list(res[0].boxes.id.cpu().numpy().astype(int))} | h={[int(b[3]-b[1]) for b in res[0].boxes.xyxy.cpu().numpy()]}")
+            except Exception:
+                pass
             if not res or not res[0].boxes:
                 # Clore les visiteurs qui ont disparu
                 self._clore_visiteurs_absents(set())
@@ -723,6 +752,13 @@ class CameraDetecteur:
                     if h_now > h_max:
                         hist["height_max"] = h_now
                 hist["positions"].append((cx, cy))
+                try:
+                    _r = (h_now / hist.get("height_max", h_now)) if hist.get("height_max") else 1.0
+                    if time.time() - _NEAR_TS.get((self.nom,tid), 0) >= 2:
+                        _NEAR_TS[(self.nom,tid)] = time.time()
+                        logger.info(f"[NEAR] {self.nom} tid={tid} duree={duree:.1f} ratio={_r:.2f} spd={_spd} mvt={hist.get('mvt_count',0)} post={hist.get('posture_frames',0)}")
+                except Exception:
+                    pass
                 if len(hist["positions"]) > 30:
                     hist["positions"].pop(0)
                 couleur = (0,0,255) if any(self.derniere_alerte.get(t,0) > time.time()-5
@@ -738,9 +774,17 @@ class CameraDetecteur:
             try:
                 # conf = SAC_CONF (le plus bas) pour ne pas manquer les sacs
                 # les objets conso seront filtrés à CONSO_CONF dans la boucle
-                res_obj = model(frame, classes=toutes_classes, conf=SAC_CONF,
+                res_obj = self.model_obj(frame, classes=toutes_classes, conf=SAC_CONF,
                                 verbose=False)
                 objs = res_obj[0].boxes if res_obj and res_obj[0].boxes else None
+                try:
+                    _no = len(objs) if objs is not None else 0
+                    _oc = list(objs.cls.cpu().numpy().astype(int)) if _no else []
+                    if time.time() - _OBJ_TS.get(self.nom, 0) >= 2:
+                        _OBJ_TS[self.nom] = time.time()
+                        logger.info(f"[OBJ] {self.nom} n={_no} classes={_oc}")
+                except Exception:
+                    pass
             except Exception:
                 objs = None
 
@@ -810,7 +854,7 @@ class CameraDetecteur:
 
             self._clore_visiteurs_absents(ids_vus)
         except Exception as e:
-            logger.error(f"Erreur analyse: {e}")
+            import traceback; logger.error("ERRTRACE "+traceback.format_exc())
         return frame
 
     def _clore_visiteurs_absents(self, ids_vus):
@@ -913,7 +957,7 @@ class CameraDetecteur:
             if now - self._last_buf_time >= 1.0 / FPS_BUFFER:
                 self._last_buf_time = now
                 with self.buffer_lock:
-                    self.frame_buffer.append(frame.copy())
+                    self.frame_buffer.append(buf.tobytes())
 
     def demarrer(self):
         self.actif = True

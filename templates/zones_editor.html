@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Zones — {{ nom_magasin }}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#F9FAFB;color:#111827;margin:0;padding:24px}
+  .wrap{max-width:1200px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:#6B7280;font-size:13px;margin-bottom:20px}
+  .bar{position:sticky;top:0;background:#F9FAFB;padding:12px 0;z-index:10;border-bottom:1px solid #E5E7EB;margin-bottom:20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .btn{border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  .primary{background:#4F46E5;color:#fff}
+  .ghost{background:#fff;color:#374151;border:1px solid #D1D5DB}
+  .danger{background:#FEF2F2;color:#DC2626;border:1px solid #FECACA}
+  .cam{background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:16px;margin-bottom:20px}
+  .camhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .camname{font-weight:700;font-size:16px}
+  .hint{color:#6B7280;font-size:12px}
+  canvas{border-radius:8px;border:1px solid #D1D5DB;cursor:crosshair;display:block;max-width:100%}
+  .noimg{background:#F3F4F6;border:1px dashed #D1D5DB;border-radius:8px;padding:30px;text-align:center;color:#9CA3AF;font-size:13px}
+  .zlist{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
+  .ztag{background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:20px;padding:5px 12px;font-size:12px;display:flex;align-items:center;gap:8px}
+  .ztag button{border:0;background:none;color:#DC2626;cursor:pointer;font-size:15px;line-height:1;padding:0}
+  #status{font-size:13px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📐 Zones surveillées — {{ nom_magasin }}</h1>
+  <div class="sub">
+    Cliquez sur l'image pour poser les sommets d'un polygone, puis « Fermer la zone ».
+    Un moment ne sera créé que si le poignet d'une personne entre dans une de ces zones.
+    Coordonnées enregistrées en relatif (0-1) : elles restent valables si la résolution change.
+  </div>
+
+  <div class="bar">
+    <button class="btn primary" onclick="enregistrer()">💾 Enregistrer les zones</button>
+    <a class="btn ghost" style="text-decoration:none" href="/client/{{ client_id }}">← Retour à la fiche</a>
+    <span id="status"></span>
+  </div>
+
+  {% for cam in cameras %}
+  <div class="cam" data-cam="{{ cam.nom }}">
+    <div class="camhead">
+      <div>
+        <div class="camname">{{ cam.nom }}</div>
+        <div class="hint">{{ cam.id }}</div>
+      </div>
+      <div>
+        <button class="btn ghost" onclick="fermerZone('{{ cam.nom }}')">✓ Fermer la zone</button>
+        <button class="btn ghost" onclick="annulerPoint('{{ cam.nom }}')">↶ Annuler point</button>
+        <button class="btn danger" onclick="viderCam('{{ cam.nom }}')">Tout effacer</button>
+      </div>
+    </div>
+
+    {% if cam.snapshot %}
+      <canvas id="cv-{{ loop.index }}"
+              data-cam="{{ cam.nom }}"
+              data-src="/snapshots/{{ client_id }}/{{ cam.snapshot }}"></canvas>
+    {% else %}
+      <div class="noimg">Aucun snapshot disponible pour cette caméra — impossible de tracer.<br>
+      Vérifiez que le PC envoie bien les vignettes.</div>
+    {% endif %}
+
+    <div class="zlist" id="zl-{{ cam.nom|replace(' ','_') }}"></div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+const ZONES = {};       // nom_cam -> [{nom,type,polygone:[[x,y]...]}]
+const ENCOURS = {};     // nom_cam -> [[x,y]...] (normalisés)
+const CANVAS = {};      // nom_cam -> {cv, ctx, img}
+
+{% for cam in cameras %}
+ZONES["{{ cam.nom }}"] = {{ cam.zones|tojson }};
+ENCOURS["{{ cam.nom }}"] = [];
+{% endfor %}
+
+function initCanvas(cv){
+  const cam = cv.dataset.cam;
+  const img = new Image();
+  img.onload = function(){
+    const maxW = 620;
+    const ratio = Math.min(1, maxW / img.naturalWidth);
+    cv.width  = Math.round(img.naturalWidth  * ratio);
+    cv.height = Math.round(img.naturalHeight * ratio);
+    CANVAS[cam] = {cv:cv, ctx:cv.getContext('2d'), img:img};
+    redraw(cam);
+  };
+  img.onerror = function(){ cv.replaceWith("Snapshot illisible"); };
+  img.src = cv.dataset.src;
+
+  cv.addEventListener('click', function(e){
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top)  / r.height;
+    ENCOURS[cam].push([Math.min(1,Math.max(0,x)), Math.min(1,Math.max(0,y))]);
+    redraw(cam);
+  });
+}
+
+function poly(ctx, pts, w, h, couleur, remplir){
+  if(!pts.length) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0]*w, pts[0][1]*h);
+  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0]*w, pts[i][1]*h);
+  if(remplir){ ctx.closePath(); ctx.fillStyle=couleur+"33"; ctx.fill(); }
+  ctx.strokeStyle=couleur; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle=couleur;
+  pts.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0]*w,p[1]*h,4,0,6.3); ctx.fill(); });
+}
+
+function redraw(cam){
+  const c = CANVAS[cam]; if(!c) return;
+  const {cv, ctx, img} = c;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(img,0,0,cv.width,cv.height);
+  (ZONES[cam]||[]).forEach(z=>{
+    poly(ctx, z.polygone, cv.width, cv.height, "#16a34a", true);
+    if(z.polygone.length){
+      ctx.fillStyle="#065f46"; ctx.font="bold 13px sans-serif";
+      ctx.fillText(z.nom, z.polygone[0][0]*cv.width+6, z.polygone[0][1]*cv.height-6);
+    }
+  });
+  poly(ctx, ENCOURS[cam]||[], cv.width, cv.height, "#DC2626", false);
+  majListe(cam);
+}
+
+function majListe(cam){
+  const el = document.getElementById("zl-"+cam.replace(/ /g,"_"));
+  if(!el) return;
+  el.innerHTML = "";
+  (ZONES[cam]||[]).forEach((z,i)=>{
+    const d=document.createElement("div"); d.className="ztag";
+    d.innerHTML = "<span>"+z.nom+" <em style='opacity:.6'>("+z.type+")</em></span>";
+    const b=document.createElement("button"); b.textContent="✕";
+    b.onclick=()=>{ ZONES[cam].splice(i,1); redraw(cam); };
+    d.appendChild(b); el.appendChild(d);
+  });
+}
+
+function fermerZone(cam){
+  const pts = ENCOURS[cam]||[];
+  if(pts.length < 3){ alert("Il faut au moins 3 points pour une zone."); return; }
+  const nom = prompt("Nom de la zone (ex. Rayon alcools) :", "Rayon");
+  if(nom === null){ return; }
+  ZONES[cam] = ZONES[cam]||[];
+  ZONES[cam].push({nom: nom.trim()||"Rayon", type:"rayon", polygone: pts.slice()});
+  ENCOURS[cam] = [];
+  redraw(cam);
+}
+
+function annulerPoint(cam){ (ENCOURS[cam]||[]).pop(); redraw(cam); }
+
+function viderCam(cam){
+  if(!confirm("Effacer toutes les zones de « "+cam+" » ?")) return;
+  ZONES[cam]=[]; ENCOURS[cam]=[]; redraw(cam);
+}
+
+function enregistrer(){
+  const st = document.getElementById("status");
+  st.textContent = "Enregistrement…"; st.style.color="#6B7280";
+  fetch(window.location.pathname, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({zones: ZONES})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){ st.textContent = "✅ Enregistré ("+d.cameras_maj+" caméras)"; st.style.color="#16a34a"; }
+    else { st.textContent = "❌ "+(d.error||"erreur"); st.style.color="#DC2626"; }
+  }).catch(e=>{ st.textContent="❌ "+e; st.style.color="#DC2626"; });
+}
+
+document.querySelectorAll("canvas[data-cam]").forEach(initCanvas);
+</script>
+</body>
+</html>

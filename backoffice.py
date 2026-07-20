@@ -2270,6 +2270,116 @@ def seed_demo_apple_route():
     )
 
 
+
+# =================================================================
+# EDITEUR DE ZONES — /client/<id>/zones
+# Polygones par camera, coordonnees NORMALISEES 0-1 (independantes
+# de la resolution : les cameras sont passees de 704x576 a 2688x1520).
+# Stockage dans config_json -> cameras[].zones
+# /api/config transmet deja ce bloc verbatim au PC : rien a changer.
+# =================================================================
+def _snapshot_par_camera(client_id):
+    """Dernier snapshot par camera -> {nom_camera: filename}"""
+    snap_dir = SNAP_DIR / str(client_id)
+    tmp = {}
+    if not snap_dir.exists():
+        return {}
+    for f in snap_dir.iterdir():
+        if not f.name.endswith(".jpg") or len(f.name) < 17:
+            continue
+        cam_key = f.name[16:-4].replace("_", " ")
+        try:
+            mtime = f.stat().st_mtime
+        except Exception:
+            continue
+        if cam_key not in tmp or mtime > tmp[cam_key][1]:
+            tmp[cam_key] = (f.name, mtime)
+    return {k: v[0] for k, v in tmp.items()}
+
+
+@app.route("/client/<int:client_id>/zones", methods=["GET"])
+@login_required
+def zones_editor(client_id):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT id,nom_magasin,config_json FROM clients WHERE id=%s", (client_id,))
+    client = cur.fetchone(); cur.close(); conn.close()
+    if not client:
+        return "Client introuvable", 404
+    raw = (client["config_json"] or "").strip()
+    try:
+        cfg = json.loads(raw) if raw else {}
+    except Exception:
+        cfg = {}
+    snaps = _snapshot_par_camera(client_id)
+    cameras = []
+    for c in cfg.get("cameras", []):
+        nom = c.get("nom") or c.get("id") or "?"
+        cameras.append({
+            "id": c.get("id") or nom,
+            "nom": nom,
+            "snapshot": snaps.get(nom),
+            "zones": c.get("zones", []),
+        })
+    return render_template("zones_editor.html",
+                           client_id=client_id,
+                           nom_magasin=client["nom_magasin"],
+                           cameras=cameras)
+
+
+@app.route("/client/<int:client_id>/zones", methods=["POST"])
+@login_required
+def zones_save(client_id):
+    data = request.get_json(silent=True) or {}
+    zones_par_cam = data.get("zones") or {}
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT config_json FROM clients WHERE id=%s", (client_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return jsonify({"ok": False, "error": "client introuvable"}), 404
+    raw = (row["config_json"] or "").strip()
+    try:
+        cfg = json.loads(raw) if raw else {}
+    except Exception:
+        cur.close(); conn.close()
+        return jsonify({"ok": False, "error": "config_json illisible"}), 400
+    maj = 0
+    for c in cfg.get("cameras", []):
+        key = c.get("nom") or c.get("id")
+        if key is None or key not in zones_par_cam:
+            continue
+        z = zones_par_cam.get(key) or []
+        propres = []
+        for item in z:
+            poly = item.get("polygone") or []
+            if len(poly) < 3:
+                continue
+            pts = []
+            for pt in poly:
+                try:
+                    x = min(1.0, max(0.0, float(pt[0])))
+                    y = min(1.0, max(0.0, float(pt[1])))
+                except Exception:
+                    continue
+                pts.append([round(x, 4), round(y, 4)])
+            if len(pts) < 3:
+                continue
+            propres.append({
+                "nom": (item.get("nom") or "zone").strip()[:60],
+                "type": (item.get("type") or "rayon").strip()[:20],
+                "polygone": pts,
+            })
+        if propres:
+            c["zones"] = propres
+        else:
+            c.pop("zones", None)
+        maj += 1
+    cur.execute("UPDATE clients SET config_json=%s WHERE id=%s",
+                (json.dumps(cfg, ensure_ascii=False, indent=2), client_id))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "cameras_maj": maj})
+
+
 # =================================================================
 # MAIN
 # =================================================================

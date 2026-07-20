@@ -111,7 +111,10 @@ function copyText(elemId, btnId) {
 <!-- Snapshots -->
 {% if snapshots %}
 <div class="card" style="margin-bottom:24px">
-  <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">📷 Snapshots caméras</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="color:#9CA3AF;font-size:12px;text-transform:uppercase;letter-spacing:.05em">📷 Snapshots caméras</div>
+    <a href="/client/{{ client_id }}/zones" style="background:#EEF2FF;color:#4338CA;border:1px solid #C7D2FE;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;text-decoration:none">📐 Définir les zones surveillées</a>
+  </div>
   <div style="display:flex;flex-wrap:wrap;gap:8px">
     {% for s in snapshots %}
     <img src="/snapshots/{{ client_id }}/{{ s }}" style="width:180px;height:100px;object-fit:cover;border-radius:8px;border:1px solid #E5E7EB">

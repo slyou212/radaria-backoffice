@@ -14,27 +14,23 @@
   .primary{background:#4F46E5;color:#fff}
   .ghost{background:#fff;color:#374151;border:1px solid #D1D5DB}
   .danger{background:#FEF2F2;color:#DC2626;border:1px solid #FECACA}
-  .btn.on{background:#4338CA;color:#fff;border-color:#4338CA}
   .cam{background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:16px;margin-bottom:20px}
   .camhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap}
   .camname{font-weight:700;font-size:16px}
   .hint{color:#6B7280;font-size:12px}
-  canvas{border-radius:8px;border:1px solid #D1D5DB;cursor:crosshair;display:block;max-width:100%;touch-action:none}
+  canvas{border-radius:8px;border:1px solid #D1D5DB;cursor:pointer;display:block;max-width:100%;touch-action:none}
   .noimg{background:#F3F4F6;border:1px dashed #D1D5DB;border-radius:8px;padding:30px;text-align:center;color:#9CA3AF;font-size:13px}
-  .zlist{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
-  .ztag{background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:20px;padding:5px 12px;font-size:12px;display:flex;align-items:center;gap:8px}
-  .ztag button{border:0;background:none;color:#DC2626;cursor:pointer;font-size:15px;line-height:1;padding:0}
   #status{font-size:13px;font-weight:600}
-  .mode{font-size:12px;color:#4338CA;font-weight:600}
+  .count{font-size:12px;color:#4338CA;font-weight:600}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>📐 Zones surveillées — {{ nom_magasin }}</h1>
   <div class="sub">
-    <b>Ajouter un point</b> : cliquez sur l'image. &nbsp;<b>Corriger un angle</b> : glissez un point existant.
-    &nbsp;<b>Zone droite</b> : bouton ▭ Rectangle, puis 2 clics (coins opposés).<br>
-    Fermez chaque zone avec ✓, nommez-la, puis Enregistrer. Un moment n'est créé que si le poignet d'une personne entre dans une zone.
+    <b>Cliquez ou glissez</b> sur les cases qui couvrent un rayon à surveiller (elles deviennent vertes).
+    Recliquez pour <b>désactiver</b> une case. Laissez l'<b>allée vide</b>.<br>
+    Un moment n'est créé que si le poignet d'une personne entre dans une case verte. Puis <b>Enregistrer</b>.
   </div>
 
   <div class="bar">
@@ -48,12 +44,9 @@
     <div class="camhead">
       <div>
         <div class="camname">{{ cam.nom }}</div>
-        <div class="hint">{{ cam.id }} · <span class="mode" id="mode-{{ cam.nom|replace(' ','_') }}">mode polygone</span></div>
+        <div class="hint">{{ cam.id }} · <span class="count" id="cnt-{{ cam.nom|replace(' ','_') }}"></span></div>
       </div>
       <div>
-        <button class="btn ghost" id="rect-{{ cam.nom|replace(' ','_') }}" onclick="toggleRect('{{ cam.nom }}')">▭ Rectangle</button>
-        <button class="btn ghost" onclick="fermerZone('{{ cam.nom }}')">✓ Fermer la zone</button>
-        <button class="btn ghost" onclick="annulerPoint('{{ cam.nom }}')">↶ Annuler point</button>
         <button class="btn danger" onclick="viderCam('{{ cam.nom }}')">Tout effacer</button>
       </div>
     </div>
@@ -66,200 +59,135 @@
       <div class="noimg">Aucun snapshot disponible pour cette caméra — impossible de tracer.<br>
       Vérifiez que le PC envoie bien les vignettes.</div>
     {% endif %}
-
-    <div class="zlist" id="zl-{{ cam.nom|replace(' ','_') }}"></div>
   </div>
   {% endfor %}
 </div>
 
 <script>
-const ZONES = {};       // nom_cam -> [{nom,type,polygone:[[x,y]...]}]
-const ENCOURS = {};     // nom_cam -> [[x,y]...] (normalisés, zone en cours)
-const CANVAS = {};      // nom_cam -> {cv, ctx, img}
-const MODE = {};        // nom_cam -> 'poly' | 'rect'
-const RECTA = {};       // nom_cam -> premier coin du rectangle [x,y] ou null
-let DRAG = null;        // {cam, kind:'zone'|'encours', zi, pi} pendant un glisser
+const COLS = 12, ROWS = 8;         // finesse de la grille
+const CELLS = {};                  // nom_cam -> Set("r,c")
+const CANVAS = {};                 // nom_cam -> {cv, ctx, img}
+let PAINT = null;                  // {cam, val:true/false} pendant un glisser
 
 {% for cam in cameras %}
-ZONES["{{ cam.nom }}"] = {{ cam.zones|tojson }};
-ENCOURS["{{ cam.nom }}"] = [];
-MODE["{{ cam.nom }}"] = 'poly';
-RECTA["{{ cam.nom }}"] = null;
+CELLS["{{ cam.nom }}"] = new Set();
+{% if cam.grid %}
+(function(){ const g={{ cam.grid|tojson }}; (g.cells||[]).forEach(p=>CELLS["{{ cam.nom }}"].add(p[0]+","+p[1])); })();
+{% elif cam.zones %}
+// migration : approx. depuis d'anciens rectangles
+(function(){ const zs={{ cam.zones|tojson }}; zs.forEach(z=>{
+  const xs=z.polygone.map(p=>p[0]), ys=z.polygone.map(p=>p[1]);
+  const x1=Math.min(...xs),x2=Math.max(...xs),y1=Math.min(...ys),y2=Math.max(...ys);
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const cx=(c+0.5)/COLS, cy=(r+0.5)/ROWS;
+    if(cx>=x1&&cx<=x2&&cy>=y1&&cy<=y2) CELLS["{{ cam.nom }}"].add(r+","+c);
+  }
+}); })();
+{% endif %}
 {% endfor %}
 
-const SEUIL_PX = 12;    // distance de saisie d'un point
-
-function pos(e, cv){
-  const r = cv.getBoundingClientRect();
-  const t = (e.touches && e.touches[0]) ? e.touches[0] : e;
-  return {
-    nx: Math.min(1, Math.max(0, (t.clientX - r.left) / r.width)),
-    ny: Math.min(1, Math.max(0, (t.clientY - r.top)  / r.height)),
-    w: r.width, h: r.height
-  };
+function cellFromXY(nx,ny){
+  return [Math.min(ROWS-1,Math.floor(ny*ROWS)), Math.min(COLS-1,Math.floor(nx*COLS))];
 }
-
-function trouverPoint(cam, nx, ny, w, h){
-  // cherche un sommet proche (zones fermées puis zone en cours)
-  const zs = ZONES[cam] || [];
-  for(let zi=0; zi<zs.length; zi++){
-    const poly = zs[zi].polygone;
-    for(let pi=0; pi<poly.length; pi++){
-      const dx=(poly[pi][0]-nx)*w, dy=(poly[pi][1]-ny)*h;
-      if(Math.hypot(dx,dy) <= SEUIL_PX) return {kind:'zone', zi, pi};
-    }
-  }
-  const enc = ENCOURS[cam] || [];
-  for(let pi=0; pi<enc.length; pi++){
-    const dx=(enc[pi][0]-nx)*w, dy=(enc[pi][1]-ny)*h;
-    if(Math.hypot(dx,dy) <= SEUIL_PX) return {kind:'encours', pi};
-  }
-  return null;
+function pos(e,cv){
+  const r=cv.getBoundingClientRect();
+  const t=(e.touches&&e.touches[0])?e.touches[0]:e;
+  return {nx:Math.min(1,Math.max(0,(t.clientX-r.left)/r.width)),
+          ny:Math.min(1,Math.max(0,(t.clientY-r.top)/r.height))};
 }
 
 function initCanvas(cv){
-  const cam = cv.dataset.cam;
-  const img = new Image();
-  img.onload = function(){
-    const maxW = 620;
-    const ratio = Math.min(1, maxW / img.naturalWidth);
-    cv.width  = Math.round(img.naturalWidth  * ratio);
-    cv.height = Math.round(img.naturalHeight * ratio);
-    CANVAS[cam] = {cv:cv, ctx:cv.getContext('2d'), img:img};
+  const cam=cv.dataset.cam;
+  const img=new Image();
+  img.onload=function(){
+    const maxW=620, ratio=Math.min(1,maxW/img.naturalWidth);
+    cv.width=Math.round(img.naturalWidth*ratio);
+    cv.height=Math.round(img.naturalHeight*ratio);
+    CANVAS[cam]={cv,ctx:cv.getContext('2d'),img};
     redraw(cam);
   };
-  img.onerror = function(){ cv.replaceWith("Snapshot illisible"); };
-  img.src = cv.dataset.src;
+  img.onerror=function(){ cv.replaceWith("Snapshot illisible"); };
+  img.src=cv.dataset.src;
 
-  cv.addEventListener('mousedown', e=>onDown(e, cam, cv));
-  cv.addEventListener('mousemove', e=>onMove(e, cam, cv));
-  window.addEventListener('mouseup', ()=>{ DRAG=null; });
-  // tactile
-  cv.addEventListener('touchstart', e=>{ e.preventDefault(); onDown(e, cam, cv); }, {passive:false});
-  cv.addEventListener('touchmove',  e=>{ e.preventDefault(); onMove(e, cam, cv); }, {passive:false});
-  cv.addEventListener('touchend',   ()=>{ DRAG=null; });
+  cv.addEventListener('mousedown',e=>onDown(e,cam,cv));
+  cv.addEventListener('mousemove',e=>onMove(e,cam,cv));
+  window.addEventListener('mouseup',()=>{PAINT=null;});
+  cv.addEventListener('touchstart',e=>{e.preventDefault();onDown(e,cam,cv);},{passive:false});
+  cv.addEventListener('touchmove',e=>{e.preventDefault();onMove(e,cam,cv);},{passive:false});
+  cv.addEventListener('touchend',()=>{PAINT=null;});
 }
 
-function onDown(e, cam, cv){
-  const p = pos(e, cv);
-  // 1) saisir un point existant pour le déplacer
-  const hit = trouverPoint(cam, p.nx, p.ny, p.w, p.h);
-  if(hit){ DRAG = Object.assign({cam}, hit); return; }
-  // 2) mode rectangle : 2 coins
-  if(MODE[cam] === 'rect'){
-    if(!RECTA[cam]){ RECTA[cam] = [p.nx, p.ny]; redraw(cam); return; }
-    const [x0,y0] = RECTA[cam];
-    const rect = [[x0,y0],[p.nx,y0],[p.nx,p.ny],[x0,p.ny]];
-    RECTA[cam] = null;
-    MODE[cam] = 'poly'; majMode(cam);
-    const nom = prompt("Nom de la zone (ex. Rayon alcools) :", "Rayon");
-    if(nom !== null){
-      (ZONES[cam]=ZONES[cam]||[]).push({nom:nom.trim()||"Rayon", type:"rayon", polygone:rect});
-    }
-    redraw(cam); return;
-  }
-  // 3) sinon : ajouter un point à la zone en cours
-  (ENCOURS[cam]=ENCOURS[cam]||[]).push([p.nx, p.ny]);
+function onDown(e,cam,cv){
+  const p=pos(e,cv); const [r,c]=cellFromXY(p.nx,p.ny); const k=r+","+c;
+  const on=CELLS[cam].has(k);
+  PAINT={cam,val:!on};                 // on peint l'inverse de l'état cliqué
+  if(PAINT.val) CELLS[cam].add(k); else CELLS[cam].delete(k);
   redraw(cam);
 }
-
-function onMove(e, cam, cv){
-  if(!DRAG || DRAG.cam !== cam) return;
-  const p = pos(e, cv);
-  if(DRAG.kind === 'zone') ZONES[cam][DRAG.zi].polygone[DRAG.pi] = [p.nx, p.ny];
-  else ENCOURS[cam][DRAG.pi] = [p.nx, p.ny];
+function onMove(e,cam,cv){
+  if(!PAINT||PAINT.cam!==cam) return;
+  const p=pos(e,cv); const [r,c]=cellFromXY(p.nx,p.ny); const k=r+","+c;
+  if(PAINT.val) CELLS[cam].add(k); else CELLS[cam].delete(k);
   redraw(cam);
-}
-
-function poly(ctx, pts, w, h, couleur, remplir){
-  if(!pts.length) return;
-  ctx.beginPath();
-  ctx.moveTo(pts[0][0]*w, pts[0][1]*h);
-  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0]*w, pts[i][1]*h);
-  if(remplir){ ctx.closePath(); ctx.fillStyle=couleur+"33"; ctx.fill(); }
-  ctx.strokeStyle=couleur; ctx.lineWidth=2; ctx.stroke();
-  ctx.fillStyle="#fff"; ctx.strokeStyle=couleur;
-  pts.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0]*w,p[1]*h,5,0,6.3); ctx.fill(); ctx.stroke(); });
 }
 
 function redraw(cam){
-  const c = CANVAS[cam]; if(!c) return;
-  const {cv, ctx, img} = c;
-  ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.drawImage(img,0,0,cv.width,cv.height);
-  (ZONES[cam]||[]).forEach(z=>{
-    poly(ctx, z.polygone, cv.width, cv.height, "#16a34a", true);
-    if(z.polygone.length){
-      ctx.fillStyle="#065f46"; ctx.font="bold 13px sans-serif";
-      ctx.fillText(z.nom, z.polygone[0][0]*cv.width+6, z.polygone[0][1]*cv.height-8);
-    }
-  });
-  poly(ctx, ENCOURS[cam]||[], cv.width, cv.height, "#DC2626", false);
-  if(MODE[cam]==='rect' && RECTA[cam]){
-    ctx.fillStyle="#DC2626";
-    ctx.beginPath(); ctx.arc(RECTA[cam][0]*cv.width, RECTA[cam][1]*cv.height, 5,0,6.3); ctx.fill();
-  }
-  majListe(cam);
+  const o=CANVAS[cam]; if(!o) return;
+  const {cv,ctx,img}=o; const cw=cv.width, ch=cv.height;
+  ctx.clearRect(0,0,cw,ch);
+  ctx.drawImage(img,0,0,cw,ch);
+  const wc=cw/COLS, hc=ch/ROWS;
+  // cases actives
+  ctx.fillStyle="rgba(22,163,74,0.38)";
+  CELLS[cam].forEach(k=>{ const [r,c]=k.split(",").map(Number); ctx.fillRect(c*wc,r*hc,wc,hc); });
+  // grille
+  ctx.strokeStyle="rgba(255,255,255,0.35)"; ctx.lineWidth=1;
+  for(let c=1;c<COLS;c++){ ctx.beginPath();ctx.moveTo(c*wc,0);ctx.lineTo(c*wc,ch);ctx.stroke(); }
+  for(let r=1;r<ROWS;r++){ ctx.beginPath();ctx.moveTo(0,r*hc);ctx.lineTo(cw,r*hc);ctx.stroke(); }
+  const el=document.getElementById("cnt-"+cam.replace(/ /g,"_"));
+  if(el) el.textContent = CELLS[cam].size ? (CELLS[cam].size+" cases sélectionnées") : "aucune case (caméra ignorée)";
 }
-
-function majListe(cam){
-  const el = document.getElementById("zl-"+cam.replace(/ /g,"_"));
-  if(!el) return;
-  el.innerHTML = "";
-  (ZONES[cam]||[]).forEach((z,i)=>{
-    const d=document.createElement("div"); d.className="ztag";
-    d.innerHTML = "<span>"+z.nom+" <em style='opacity:.6'>("+z.type+")</em></span>";
-    const b=document.createElement("button"); b.textContent="✕";
-    b.onclick=()=>{ ZONES[cam].splice(i,1); redraw(cam); };
-    d.appendChild(b); el.appendChild(d);
-  });
-}
-
-function majMode(cam){
-  const el=document.getElementById("mode-"+cam.replace(/ /g,"_"));
-  if(el) el.textContent = MODE[cam]==='rect' ? "mode rectangle (2 clics)" : "mode polygone";
-  const b=document.getElementById("rect-"+cam.replace(/ /g,"_"));
-  if(b) b.className = "btn ghost" + (MODE[cam]==='rect' ? " on" : "");
-}
-
-function toggleRect(cam){
-  MODE[cam] = (MODE[cam]==='rect') ? 'poly' : 'rect';
-  RECTA[cam] = null;
-  majMode(cam); redraw(cam);
-}
-
-function fermerZone(cam){
-  const pts = ENCOURS[cam]||[];
-  if(pts.length < 3){ alert("Il faut au moins 3 points pour une zone."); return; }
-  const nom = prompt("Nom de la zone (ex. Rayon alcools) :", "Rayon");
-  if(nom === null){ return; }
-  (ZONES[cam]=ZONES[cam]||[]).push({nom: nom.trim()||"Rayon", type:"rayon", polygone: pts.slice()});
-  ENCOURS[cam] = [];
-  redraw(cam);
-}
-
-function annulerPoint(cam){ (ENCOURS[cam]||[]).pop(); redraw(cam); }
 
 function viderCam(cam){
-  if(!confirm("Effacer toutes les zones de « "+cam+" » ?")) return;
-  ZONES[cam]=[]; ENCOURS[cam]=[]; RECTA[cam]=null; redraw(cam);
+  if(!confirm("Effacer toutes les cases de « "+cam+" » ?")) return;
+  CELLS[cam].clear(); redraw(cam);
+}
+
+// cases actives -> rectangles fusionnés par ligne (format zones du kiosk)
+function cellsVersRects(cam){
+  const rects=[]; const set=CELLS[cam];
+  for(let r=0;r<ROWS;r++){
+    let c=0;
+    while(c<COLS){
+      if(set.has(r+","+c)){
+        let c2=c; while(c2+1<COLS && set.has(r+","+(c2+1))) c2++;
+        const x1=+(c/COLS).toFixed(4), x2=+((c2+1)/COLS).toFixed(4);
+        const y1=+(r/ROWS).toFixed(4), y2=+((r+1)/ROWS).toFixed(4);
+        rects.push({nom:"Zone", type:"rayon", polygone:[[x1,y1],[x2,y1],[x2,y2],[x1,y2]]});
+        c=c2+1;
+      } else c++;
+    }
+  }
+  return rects;
 }
 
 function enregistrer(){
-  const st = document.getElementById("status");
-  st.textContent = "Enregistrement…"; st.style.color="#6B7280";
-  fetch(window.location.pathname, {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({zones: ZONES})
-  }).then(r=>r.json()).then(d=>{
-    if(d.ok){ st.textContent = "✅ Enregistré ("+d.cameras_maj+" caméras)"; st.style.color="#16a34a"; }
-    else { st.textContent = "❌ "+(d.error||"erreur"); st.style.color="#DC2626"; }
-  }).catch(e=>{ st.textContent="❌ "+e; st.style.color="#DC2626"; });
+  const st=document.getElementById("status");
+  st.textContent="Enregistrement…"; st.style.color="#6B7280";
+  const zones={}, grids={};
+  Object.keys(CELLS).forEach(cam=>{
+    zones[cam]=cellsVersRects(cam);
+    grids[cam]={cols:COLS,rows:ROWS,cells:[...CELLS[cam]].map(k=>k.split(",").map(Number))};
+  });
+  fetch(window.location.pathname,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({zones,grids})})
+   .then(r=>r.json()).then(d=>{
+     if(d.ok){ st.textContent="✅ Enregistré ("+d.cameras_maj+" caméras)"; st.style.color="#16a34a"; }
+     else { st.textContent="❌ "+(d.error||"erreur"); st.style.color="#DC2626"; }
+   }).catch(e=>{ st.textContent="❌ "+e; st.style.color="#DC2626"; });
 }
 
 document.querySelectorAll("canvas[data-cam]").forEach(initCanvas);
-document.querySelectorAll("[data-cam]").forEach(el=>{ if(el.dataset.cam) majMode(el.dataset.cam); });
 </script>
 </body>
 </html>

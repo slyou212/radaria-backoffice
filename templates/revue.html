@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}File de revue — RadarIA{% endblock %}
+
+{% block extra_css %}
+<style>
+  .revue-toolbar { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:20px; }
+  .revue-toolbar .form-group { gap:6px; }
+  .revue-list { display:flex; flex-direction:column; gap:12px; }
+  .passage {
+    display:flex; gap:16px; align-items:stretch;
+    background:#fff; border:1px solid #E5E7EB; border-radius:14px; overflow:hidden;
+  }
+  .passage.done { opacity:.55; }
+  .passage-photo { width:150px; min-width:150px; background:#111827; display:flex; align-items:center; justify-content:center; }
+  .passage-photo img { width:100%; height:100%; object-fit:cover; display:block; }
+  .passage-photo .noimg { color:#6B7280; font-size:12px; padding:12px; text-align:center; }
+  .passage-body { flex:1; padding:14px 16px; display:flex; flex-direction:column; gap:8px; }
+  .passage-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .passage-cam { font-weight:700; font-size:15px; }
+  .passage-meta { color:#6B7280; font-size:13px; }
+  .passage-raisons { font-size:13.5px; color:#374151; }
+  .passage-side { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:14px 18px; border-left:1px solid #F3F4F6; }
+  .score-badge { font-size:26px; font-weight:800; line-height:1; }
+  .score-hi { color:#DC2626; } .score-mid { color:#EA580C; } .score-lo { color:#6B7280; }
+  .fb-buttons { display:flex; gap:6px; }
+  .fb-buttons form { display:inline; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; background:#F3F4F6; color:#4B5563; border:1px solid #E5E7EB; }
+  .empty { text-align:center; color:#6B7280; padding:48px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">🔎 File de <span>revue</span></div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+  <div class="stat-card"><div class="stat-label">Passages du jour</div><div class="stat-value">{{ stats.total }}</div></div>
+  <div class="stat-card"><div class="stat-label">À revoir</div><div class="stat-value">{{ stats.total - stats.vrais - stats.faux }}</div></div>
+  <div class="stat-card"><div class="stat-label">Confirmés (vrai)</div><div class="stat-value green">{{ stats.vrais }}</div></div>
+  <div class="stat-card"><div class="stat-label">Écartés (faux)</div><div class="stat-value">{{ stats.faux }}</div></div>
+</div>
+
+<form method="get" action="/revue" class="revue-toolbar card">
+  <div class="form-group">
+    <label>Date</label>
+    <input type="date" name="date" value="{{ filtre_date }}">
+  </div>
+  <div class="form-group">
+    <label>Filtre</label>
+    <select name="feedback">
+      <option value="" {{ 'selected' if filtre_fb=='' else '' }}>Tous</option>
+      <option value="none" {{ 'selected' if filtre_fb=='none' else '' }}>À revoir (non traités)</option>
+      <option value="vrai" {{ 'selected' if filtre_fb=='vrai' else '' }}>Confirmés (vrai)</option>
+      <option value="faux" {{ 'selected' if filtre_fb=='faux' else '' }}>Écartés (faux)</option>
+    </select>
+  </div>
+  <button class="btn btn-primary" type="submit">Filtrer</button>
+</form>
+
+<div style="height:16px;"></div>
+
+{% if passages %}
+<div class="revue-list">
+  {% for p in passages %}
+  <div class="passage {{ 'done' if p.feedback else '' }}">
+    <div class="passage-photo">
+      {% if p.image_path %}
+        <img src="/snapshots/{{ p.client_id }}/{{ p.image_path }}" alt="snapshot" loading="lazy">
+      {% else %}
+        <div class="noimg">pas de photo</div>
+      {% endif %}
+    </div>
+    <div class="passage-body">
+      <div class="passage-top">
+        <span class="passage-cam">{{ p.camera or '—' }}</span>
+        <span class="chip">{{ p.nom_magasin }}</span>
+        <span class="passage-meta">{{ p.heure_debut }}{% if p.heure_fin %} → {{ p.heure_fin }}{% endif %}
+          {% if p.duree_sec %}· {{ p.duree_sec }}s{% endif %}</span>
+        {% if p.feedback == 'vrai' %}<span class="badge badge-red">CONFIRMÉ</span>
+        {% elif p.feedback == 'faux' %}<span class="badge badge-gray">ÉCARTÉ</span>
+        {% elif p.feedback == 'rien' %}<span class="badge badge-gray">RIEN À SIGNALER</span>{% endif %}
+      </div>
+      <div class="passage-raisons">{{ p.raisons or 'Passage en rayon' }}</div>
+      <div class="passage-meta">
+        {% if p.zones %}Zones : {{ p.zones }} · {% endif %}
+        Présence rayon {{ p.dwell_rayon_sec }}s · Mains cachées {{ p.mains_cachees_pct }}%{% if p.sans_caisse %} · sans caisse{% endif %}
+      </div>
+    </div>
+    <div class="passage-side">
+      <div class="score-badge {{ 'score-hi' if p.score>=60 else ('score-mid' if p.score>=30 else 'score-lo') }}">{{ p.score }}</div>
+      <div class="fb-buttons">
+        <form method="post" action="/revue/{{ p.id }}/feedback">
+          <input type="hidden" name="feedback" value="vrai">
+          <input type="hidden" name="redirect" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-warning" type="submit" title="Vrai suspect">Vrai</button>
+        </form>
+        <form method="post" action="/revue/{{ p.id }}/feedback">
+          <input type="hidden" name="feedback" value="faux">
+          <input type="hidden" name="redirect" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-secondary" type="submit" title="Faux positif">Faux</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">Aucun passage à revoir pour cette date.</div>
+{% endif %}
+{% endblock %}

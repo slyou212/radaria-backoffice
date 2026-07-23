@@ -115,6 +115,7 @@
   <div class="topbar-logo">Radar<span>IA</span></div>
   <nav class="topbar-nav">
     <a href="/" class="{{ 'active' if request.endpoint == 'dashboard' else '' }}">🏠 Dashboard</a>
+    <a href="/revue" class="{{ 'active' if request.endpoint == 'file_revue' else '' }}">🔎 File de revue</a>
     <a href="/client/nouveau">➕ Nouveau client</a>
   </nav>
   <div class="topbar-right">

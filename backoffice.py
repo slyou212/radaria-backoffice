@@ -163,6 +163,27 @@ def init_db():
     )
     """)
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS passages_revue (
+        id                SERIAL PRIMARY KEY,
+        client_id         INTEGER NOT NULL REFERENCES clients(id),
+        passage_id        TEXT,
+        camera            TEXT,
+        date              TEXT,
+        heure_debut       TEXT,
+        heure_fin         TEXT,
+        duree_sec         INTEGER DEFAULT 0,
+        zones             TEXT DEFAULT '',
+        dwell_rayon_sec   INTEGER DEFAULT 0,
+        mains_cachees_pct INTEGER DEFAULT 0,
+        sans_caisse       BOOLEAN DEFAULT FALSE,
+        score             INTEGER DEFAULT 0,
+        raisons           TEXT DEFAULT '',
+        image_path        TEXT DEFAULT '',
+        feedback          TEXT DEFAULT '',
+        created_at        TIMESTAMP DEFAULT NOW()
+    )
+    """)
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS interventions (
         id SERIAL PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES clients(id),
         date TEXT DEFAULT CURRENT_DATE::TEXT, type TEXT, description TEXT,
@@ -1438,6 +1459,96 @@ def api_snapshot():
     return jsonify({"ok":True})
 
 # =================================================================
+# MODULE FILE DE REVUE (passages a revoir)
+# =================================================================
+# Poids du score (reglables ici, sans toucher au PC). Score 0-100.
+REVUE_POIDS = {"dwell_max": 120, "dwell_pts": 40, "mains_pts": 35, "sans_caisse_pts": 25}
+
+def _score_passage(dwell_rayon_sec, mains_cachees_pct, sans_caisse):
+    """Score composite 0-100 + libelles des raisons. La logique vit ici (backoffice)."""
+    p = REVUE_POIDS
+    dwell_score = min(p["dwell_pts"], (dwell_rayon_sec / p["dwell_max"]) * p["dwell_pts"]) if dwell_rayon_sec > 0 else 0
+    mains_score = (max(0, min(100, mains_cachees_pct)) / 100.0) * p["mains_pts"]
+    caisse_score = p["sans_caisse_pts"] if sans_caisse else 0
+    score = int(round(dwell_score + mains_score + caisse_score))
+    raisons = []
+    if dwell_rayon_sec >= 30:  raisons.append(f"Longue presence rayon ({dwell_rayon_sec}s)")
+    if mains_cachees_pct >= 40: raisons.append(f"Mains peu visibles ({mains_cachees_pct}%)")
+    if sans_caisse:            raisons.append("Rayon sans passage caisse")
+    return min(100, score), " - ".join(raisons)
+
+@app.route("/api/passage", methods=["POST"])
+@limiter.limit("120 per minute")
+def api_passage():
+    data = request.get_json(silent=True) or {}; key = data.get("license_key","")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT id FROM clients WHERE license_key=%s AND statut='actif'", (key,))
+    client = cur.fetchone()
+    if not client: cur.close(); conn.close(); return jsonify({"error":"License invalide"}),403
+    client_id = client["id"]
+    dwell = int(data.get("dwell_rayon_sec", 0) or 0)
+    mains = int(data.get("mains_cachees_pct", 0) or 0)
+    sans_caisse = bool(data.get("sans_caisse", False))
+    score, raisons = _score_passage(dwell, mains, sans_caisse)
+    image_path = ""
+    img_b64 = data.get("image_b64", "")
+    if img_b64:
+        try:
+            snap_dir = SNAP_DIR / str(client_id); snap_dir.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            cam = (data.get("camera", "cam") or "cam").replace(" ", "_")
+            fp = snap_dir / f"revue_{ts}_{cam}.jpg"
+            fp.write_bytes(base64.b64decode(img_b64))
+            image_path = fp.name
+        except Exception:
+            image_path = ""
+    cur.execute("""INSERT INTO passages_revue
+        (client_id,passage_id,camera,date,heure_debut,heure_fin,duree_sec,zones,
+         dwell_rayon_sec,mains_cachees_pct,sans_caisse,score,raisons,image_path)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (client_id, data.get("passage_id", ""), data.get("camera", ""),
+         data.get("date", str(date.today())), data.get("heure_debut", ""), data.get("heure_fin", ""),
+         int(data.get("duree_sec", 0) or 0), data.get("zones", ""),
+         dwell, mains, sans_caisse, score, raisons, image_path))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "score": score})
+
+@app.route("/revue")
+@login_required
+def file_revue():
+    filtre_date = request.args.get("date", str(date.today()))
+    filtre_fb   = request.args.get("feedback", "")
+    conn = get_db(); cur = conn.cursor()
+    conditions = ["p.date=%s"]; params = [filtre_date]
+    if filtre_fb == "none":
+        conditions.append("(p.feedback='' OR p.feedback IS NULL)")
+    elif filtre_fb:
+        conditions.append("p.feedback=%s"); params.append(filtre_fb)
+    where = "WHERE " + " AND ".join(conditions)
+    cur.execute(f"""SELECT p.*, c.nom_magasin FROM passages_revue p
+                    JOIN clients c ON c.id=p.client_id {where}
+                    ORDER BY p.score DESC, p.heure_debut DESC LIMIT 200""", params)
+    passages = [dict(r) for r in cur.fetchall()]
+    cur.execute("""SELECT COUNT(*) as n,
+                          COALESCE(SUM(CASE WHEN feedback='vrai' THEN 1 ELSE 0 END),0) as v,
+                          COALESCE(SUM(CASE WHEN feedback='faux' THEN 1 ELSE 0 END),0) as f
+                   FROM passages_revue WHERE date=%s""", (filtre_date,))
+    st = cur.fetchone(); cur.close(); conn.close()
+    stats = {"total": st["n"], "vrais": st["v"], "faux": st["f"]}
+    return render_template("revue.html", passages=passages, filtre_date=filtre_date,
+                           filtre_fb=filtre_fb, stats=stats)
+
+@app.route("/revue/<int:passage_id>/feedback", methods=["POST"])
+@login_required
+def revue_feedback(passage_id):
+    fb = request.form.get("feedback", "")
+    redirect_url = request.form.get("redirect", "")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("UPDATE passages_revue SET feedback=%s WHERE id=%s", (fb, passage_id))
+    conn.commit(); cur.close(); conn.close()
+    return redirect(redirect_url or url_for("file_revue"))
+
+# =================================================================
 # MODULE SINISTRES
 # =================================================================
 TYPES_SINISTRE = ['Vol', 'Vandalisme', 'Intrusion', 'Incendie', 'Degat des eaux', 'Accident', 'Autre']
@@ -2319,6 +2430,7 @@ def zones_editor(client_id):
             "nom": nom,
             "snapshot": snaps.get(nom),
             "zones": c.get("zones", []),
+            "grid": c.get("zone_grid"),
         })
     return render_template("zones_editor.html",
                            client_id=client_id,
@@ -2331,6 +2443,7 @@ def zones_editor(client_id):
 def zones_save(client_id):
     data = request.get_json(silent=True) or {}
     zones_par_cam = data.get("zones") or {}
+    grids_par_cam = data.get("grids") or {}
     conn = get_db(); cur = conn.cursor()
     cur.execute("SELECT config_json FROM clients WHERE id=%s", (client_id,))
     row = cur.fetchone()
@@ -2373,6 +2486,21 @@ def zones_save(client_id):
             c["zones"] = propres
         else:
             c.pop("zones", None)
+        # grille de cases (pour re-edition facile)
+        g = grids_par_cam.get(key)
+        if isinstance(g, dict) and g.get("cells"):
+            try:
+                cols = int(g.get("cols", 0)); rows = int(g.get("rows", 0))
+                cells = [[int(a), int(b)] for a, b in g.get("cells", [])
+                         if 0 <= int(b) < cols and 0 <= int(a) < rows]
+                if cols and rows and cells:
+                    c["zone_grid"] = {"cols": cols, "rows": rows, "cells": cells}
+                else:
+                    c.pop("zone_grid", None)
+            except Exception:
+                c.pop("zone_grid", None)
+        else:
+            c.pop("zone_grid", None)
         maj += 1
     cur.execute("UPDATE clients SET config_json=%s WHERE id=%s",
                 (json.dumps(cfg, ensure_ascii=False, indent=2), client_id))
